@@ -64,7 +64,7 @@ main() {
       TEMPLATE|KEYS_DIR|STD_KEY_FILE|ADM_KEY_FILE|TMUX_CONF|OVERLAY_IMAGE_DIR|\
       BASE_IMAGE_DIR|STD_USER|ADMIN_USER|GENERATE_KEYS|ENCRYPT_KEYS|SEED_METHOD|\
       INSTANCE_ID|VM_HOSTNAME|DOMAIN|RAM_MB|VCPUS|LIBVIRT_URI|NETWORK|OSINFO|OVMF_CODE|\
-      VER|ARCH|FEDORA_GPG_URL|CHECKSUM_URL|COMPOSE) return 0 ;;
+      NVRAM_PATH|VER|ARCH|FEDORA_GPG_URL|CHECKSUM_URL|COMPOSE) return 0 ;;
       *) return 1 ;;
     esac
   }
@@ -105,7 +105,7 @@ main() {
         [[ "$val" =~ ^[A-Za-z0-9=,._:-]+$ ]] || _die "$where has invalid characters: '$val'" ;;
       NETWORK)
         [[ "$val" =~ ^[A-Za-z0-9=,._:/-]+$ ]] || _die "$where has invalid characters: '$val'" ;;
-      TEMPLATE|KEYS_DIR|STD_KEY_FILE|ADM_KEY_FILE|TMUX_CONF|OVERLAY_IMAGE_DIR|BASE_IMAGE_DIR|OVMF_CODE)
+      TEMPLATE|KEYS_DIR|STD_KEY_FILE|ADM_KEY_FILE|TMUX_CONF|OVERLAY_IMAGE_DIR|BASE_IMAGE_DIR|OVMF_CODE|NVRAM_PATH)
         [[ "$val" != *[[:space:]]* ]] || _die "$where (a path) must not contain whitespace" ;;
     esac
   }
@@ -210,18 +210,23 @@ main() {
     local mode="$1"
     local -n _ref="$2"
     _ref=()
+    local boot
     case "$mode" in
-      bios) ;;  # default SeaBIOS; no --boot needed
+      bios) return 0 ;;  # default SeaBIOS; no --boot needed (nvram is UEFI-only)
       uefi)
         if [[ -n "$ovmf_code" ]]; then
-          _ref=(--boot "uefi,loader=${ovmf_code},loader.readonly=yes,loader.type=pflash")
+          boot="uefi,loader=${ovmf_code},loader.readonly=yes,loader.type=pflash"
         else
-          _ref=(--boot uefi)  # libvirt firmware autoselection
+          boot="uefi"  # libvirt firmware autoselection
         fi ;;
       uefi-secure)
-        _ref=(--boot "uefi,firmware.feature0.name=secure-boot,firmware.feature0.enabled=yes") ;;
+        boot="uefi,firmware.feature0.name=secure-boot,firmware.feature0.enabled=yes" ;;
       *) _die "unknown firmware mode '$mode' (use: bios|uefi|uefi-secure)" ;;
     esac
+    # Custom per-VM UEFI varstore path; overrides autoselection's default
+    # location while keeping template-based init. Empty -> libvirt's default.
+    [[ -n "$nvram_path" ]] && boot+=",nvram=${nvram_path}"
+    _ref=(--boot "$boot")
   }
 
   _undefine_domain() {  # tear down a prior domain of the same name, incl. UEFI nvram
@@ -564,6 +569,7 @@ EOF
   local network="${cfg[NETWORK]}"
   local osinfo="${cfg[OSINFO]}"
   local ovmf_code="${cfg[OVMF_CODE]:-}"
+  local nvram_path="${cfg[NVRAM_PATH]:-}"
   local ver="${cfg[VER]}"
   local arch="${cfg[ARCH]}"
   local fedora_gpg_url="${cfg[FEDORA_GPG_URL]}"

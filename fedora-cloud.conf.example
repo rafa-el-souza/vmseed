@@ -54,6 +54,8 @@ BASE_IMAGE_DIR=/var/lib/fedora-cloud/base
 #                                      #   network=default only with a system URI: qemu:///system
 # OSINFO=detect=on,require=off         # virt-install --osinfo value
 # OVMF_CODE=/usr/share/edk2/ovmf/OVMF_CODE.fd  # explicit UEFI firmware (optional)
+# NVRAM_PATH=/var/lib/fedora-cloud/web01_VARS.fd  # per-VM UEFI varstore path (uefi/uefi-secure
+#                                      # only; empty = libvirt's default nvram dir)
 
 # --- download / verification ---
 # VER=44                               # Fedora release, positive integer
