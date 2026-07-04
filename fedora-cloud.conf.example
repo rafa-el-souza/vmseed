@@ -36,6 +36,10 @@ BASE_IMAGE_DIR=/var/lib/fedora-cloud/base
 #                                      # no = fail (you must provide the key yourself)
 # ENCRYPT_KEYS=yes                     # auto-generated keys: yes = passphrase prompt
 #                                      # (interactive); no = -N '' (non-interactive)
+# CRYPTO_POLICY=DEFAULT:NO-SHA1        # system-wide crypto policy set on the guest.
+#                                      # DEFAULT:NO-SHA1 bans SHA-1 but allows 2048-bit
+#                                      # RSA certs; FUTURE is stricter (3072-bit RSA) and
+#                                      # can break TLS to some CDNs (e.g. the Claude installer).
 # SEED_METHOD=seed-iso                 # how the cloud-init seed reaches the guest:
 #                                      #   seed-iso   build a cidata ISO (needs cloud-localds)
 #                                      #              and attach it as a CDROM (default)

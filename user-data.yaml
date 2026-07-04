@@ -3,8 +3,8 @@
 # detect the payload format. Do not add anything before it.
 #
 # This is a TEMPLATE. The PLACEHOLDER_* tokens are replaced at build time by
-# `fedora-cloud.sh build` — the two usernames (STD_USER / ADMIN_USER), the SSH
-# public keys, and the base64-encoded tmux config. Do not edit those in here.
+# `fedora-cloud.sh build` — the usernames (STD_USER / ADMIN_USER), the SSH public
+# keys, the base64-encoded tmux config, and CRYPTO_POLICY. Do not edit those here.
 
 users:
   # Declaring `users:` replaces cloud-init's default user set. Keep `default`
@@ -85,11 +85,11 @@ write_files:
     content: "PLACEHOLDER_TMUX_CONF_B64"
 
 runcmd:
-  # 1) Tighten the system-wide crypto policy. FUTURE disables SHA-1, CBC, and
-  #    sub-3072-bit RSA across sshd/TLS/etc. Switch to "DEFAULT:NO-SHA1" if you
-  #    need to support older clients. update-crypto-policies rewrites the
-  #    per-app configs; the sshd reload below then picks them up.
-  - [ update-crypto-policies, --set, FUTURE ]
+  # 1) Tighten the system-wide crypto policy (CRYPTO_POLICY at build time).
+  #    Default DEFAULT:NO-SHA1 bans SHA-1 while still allowing 2048-bit RSA certs
+  #    (FUTURE requires 3072-bit RSA and breaks TLS to some CDNs). update-crypto-
+  #    policies rewrites the per-app configs; the sshd reload below picks them up.
+  - [ update-crypto-policies, --set, PLACEHOLDER_CRYPTO_POLICY ]
   # 2) Validate the sshd drop-in and apply it. `sshd -t` fails the boot loudly
   #    if the config is broken, rather than silently locking you out.
   - [ sh, -c, "sshd -t && systemctl reload sshd" ]

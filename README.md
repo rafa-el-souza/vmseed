@@ -63,16 +63,16 @@ defaults without editing the main config. It sets:
 | `X11Forwarding` / `AllowAgentForwarding` / `AllowTcpForwarding` / `PermitTunnel` | `no` | shrink attack surface |
 
 Cipher/MAC/KEX selection is **not** hardcoded in the drop-in. Instead a `runcmd`
-tightens Fedora's system-wide crypto policy with
-`update-crypto-policies --set FUTURE`, which disables SHA-1, CBC-mode ciphers and
-sub-3072-bit RSA everywhere (sshd, TLS, ...). Then `sshd -t && systemctl reload
+tightens Fedora's system-wide crypto policy via `update-crypto-policies --set
+$CRYPTO_POLICY` (**default `DEFAULT:NO-SHA1`**), then `sshd -t && systemctl reload
 sshd` validates and applies the config — a malformed config fails the boot loudly
 instead of locking you out.
 
-> **`FUTURE` is aggressive.** It can reject older SSH/TLS clients. Modern OpenSSH
-> with the ed25519 keys this tool generates is fine. If you need broader
-> compatibility, change the `runcmd` to
-> `update-crypto-policies --set DEFAULT:NO-SHA1`.
+> **Why `DEFAULT:NO-SHA1` and not `FUTURE`?** `FUTURE` also requires 3072-bit RSA,
+> which **breaks TLS to CDNs serving 2048-bit RSA certs** — including the Claude
+> Code installer (`curl` fails cert verification). `DEFAULT:NO-SHA1` still bans
+> SHA-1 but keeps that compatibility. Set `CRYPTO_POLICY=FUTURE` if you want the
+> stricter policy and don't need those endpoints.
 >
 > `AllowUsers` is generated from `STD_USER`/`ADMIN_USER` at build time, so it
 > always matches the provisioned users — no manual edit needed when you rename.
@@ -516,10 +516,13 @@ that line; see `fedora-cloud.conf.example` for the allowed keys and value format
 **`error: '--config <file>' is required ...`.**
 `build`, `boot`, and `run` all need `--config`. Only `help` runs without it.
 
-**`update-crypto-policies --set FUTURE` locked out an old client.**
-`FUTURE` disables SHA-1/CBC/weak RSA system-wide. Connect via the serial console
-and relax it: `sudo update-crypto-policies --set DEFAULT:NO-SHA1 && sudo systemctl reload sshd`,
-or edit the `runcmd` in `user-data.yaml` before the next build.
+**A strict crypto policy broke TLS / locked out a client.**
+Symptoms: `curl` reports *"failed to verify the legitimacy of the server"* (e.g.
+the Claude installer against a 2048-bit-RSA CDN), or an older SSH/TLS client is
+refused. This happens with `CRYPTO_POLICY=FUTURE`. On the guest, relax it:
+`sudo update-crypto-policies --set DEFAULT:NO-SHA1 && sudo systemctl reload sshd`.
+To make it stick for future VMs, set `CRYPTO_POLICY=DEFAULT:NO-SHA1` (the default)
+in the config and rebuild.
 
 **Re-running `boot` uses the old disk state.**
 The qcow2 overlay in `$OVERLAY_IMAGE_DIR` persists between runs. Reset it with

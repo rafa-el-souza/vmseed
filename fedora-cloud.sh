@@ -63,8 +63,8 @@ main() {
     case "$1" in
       TEMPLATE|KEYS_DIR|STD_KEY_FILE|ADM_KEY_FILE|TMUX_CONF|OVERLAY_IMAGE_DIR|\
       BASE_IMAGE_DIR|STD_USER|ADMIN_USER|GENERATE_KEYS|ENCRYPT_KEYS|SEED_METHOD|\
-      INSTANCE_ID|VM_HOSTNAME|DOMAIN|RAM_MB|VCPUS|LIBVIRT_URI|NETWORK|OSINFO|OVMF_CODE|\
-      NVRAM_PATH|IMAGE_VARIANT|VER|ARCH|FEDORA_GPG_URL|CHECKSUM_URL|COMPOSE) return 0 ;;
+      CRYPTO_POLICY|INSTANCE_ID|VM_HOSTNAME|DOMAIN|RAM_MB|VCPUS|LIBVIRT_URI|NETWORK|OSINFO|\
+      OVMF_CODE|NVRAM_PATH|IMAGE_VARIANT|VER|ARCH|FEDORA_GPG_URL|CHECKSUM_URL|COMPOSE) return 0 ;;
       *) return 1 ;;
     esac
   }
@@ -93,6 +93,10 @@ main() {
         [[ "$val" =~ ^(seed-iso|cloud-init)$ ]] || _die "$where must be 'seed-iso' or 'cloud-init', got '$val'" ;;
       IMAGE_VARIANT)
         [[ "$val" =~ ^(generic|uki)$ ]] || _die "$where must be 'generic' or 'uki', got '$val'" ;;
+      CRYPTO_POLICY)
+        # e.g. DEFAULT, FUTURE, LEGACY, FIPS, or a base with :MODIFIERS like DEFAULT:NO-SHA1
+        [[ "$val" =~ ^[A-Za-z0-9]+(:[A-Za-z0-9_-]+)*$ ]] \
+          || _die "$where invalid crypto policy (e.g. DEFAULT:NO-SHA1, FUTURE), got '$val'" ;;
       STD_USER|ADMIN_USER)
         [[ "$val" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] \
           || _die "$where must be a valid Linux username (^[a-z_][a-z0-9_-]{0,31}$), got '$val'"
@@ -175,17 +179,18 @@ main() {
     [[ -f "$pub" ]] || _die "failed to create $pub"
   }
 
-  _render_user_data() {  # _render_user_data <std_key> <adm_key> <tmux_b64> <std_user> <admin_user>
+  _render_user_data() {  # <std_key> <adm_key> <tmux_b64> <std_user> <admin_user> <crypto_policy>
     # awk (not sed) so special chars in a value can't break substitution. The
     # replacement text is passed literally (gsub's target is a fixed string here,
     # and none of the values contain awk's '&' backreference character).
-    awk -v std="$1" -v adm="$2" -v tmux="$3" -v su="$4" -v au="$5" '
+    awk -v std="$1" -v adm="$2" -v tmux="$3" -v su="$4" -v au="$5" -v crypto="$6" '
       {
         gsub(/PLACEHOLDER_STANDARD_KEY/, std)
         gsub(/PLACEHOLDER_ADMIN_KEY/, adm)
         gsub(/PLACEHOLDER_TMUX_CONF_B64/, tmux)
         gsub(/PLACEHOLDER_STD_USER/, su)
         gsub(/PLACEHOLDER_ADMIN_USER/, au)
+        gsub(/PLACEHOLDER_CRYPTO_POLICY/, crypto)
         print
       }
     ' "$template"
@@ -363,7 +368,7 @@ main() {
     # Seed artifacts live in the build/ subdir of the overlay image dir.
     local seed_dir="$overlay_image_dir/build"
     mkdir -p "$seed_dir"
-    _render_user_data "$std_key" "$adm_key" "$tmux_b64" "$std_user" "$admin_user" > "$seed_dir/user-data"
+    _render_user_data "$std_key" "$adm_key" "$tmux_b64" "$std_user" "$admin_user" "$crypto_policy" > "$seed_dir/user-data"
     printf 'instance-id: %s\nlocal-hostname: %s\n' "$instance_id" "$vm_hostname" > "$seed_dir/meta-data"
 
     _validate_seed "$seed_dir/user-data"
@@ -542,6 +547,7 @@ EOF
     [GENERATE_KEYS]="yes"
     [ENCRYPT_KEYS]="yes"
     [SEED_METHOD]="seed-iso"
+    [CRYPTO_POLICY]="DEFAULT:NO-SHA1"
     [INSTANCE_ID]="fedora-01"
     [VM_HOSTNAME]="fedora-01"
     [DOMAIN]="fedora-cloud-01"
@@ -581,6 +587,7 @@ EOF
   local admin_user="${cfg[ADMIN_USER]}"
   local generate_keys="${cfg[GENERATE_KEYS]}"
   local encrypt_keys="${cfg[ENCRYPT_KEYS]}"
+  local crypto_policy="${cfg[CRYPTO_POLICY]}"
   local seed_method="${cfg[SEED_METHOD]}"
   local std_key_file="${cfg[STD_KEY_FILE]}"
   local adm_key_file="${cfg[ADM_KEY_FILE]}"
