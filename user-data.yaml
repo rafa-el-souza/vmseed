@@ -93,7 +93,11 @@ runcmd:
   # 2) Validate the sshd drop-in and apply it. `sshd -t` fails the boot loudly
   #    if the config is broken, rather than silently locking you out.
   - [ sh, -c, "sshd -t && systemctl reload sshd" ]
-  # 3) Per-user setup for the standard user only, run as that user with a login
+  # 3) Lock the root password (defense-in-depth). The base image already ships
+  #    root locked and root SSH is disabled above; this asserts it explicitly.
+  #    `passwd -l` is idempotent. The admin still reaches root via sudo.
+  - [ passwd, -l, root ]
+  # 4) Per-user setup for the standard user only, run as that user with a login
   #    shell so HOME and ~ resolve to its home. git and tmux come from `packages`
   #    above, which the package module installs before runcmd runs.
   - [ runuser, -l, PLACEHOLDER_STD_USER, -c, "curl -fsSL https://claude.ai/install.sh | bash" ]

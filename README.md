@@ -77,6 +77,62 @@ instead of locking you out.
 > `AllowUsers` is generated from `STD_USER`/`ADMIN_USER` at build time, so it
 > always matches the provisioned users — no manual edit needed when you rename.
 
+## Accounts, sudo & passwords
+
+**No passwords are set during provisioning** — every account is SSH-key-only:
+
+- **standard user** — no sudo, password locked.
+- **admin** — in `wheel`, `sudo: ALL=(ALL) NOPASSWD:ALL`, password locked.
+- **root** — SSH disabled (`PermitRootLogin no` + not in `AllowUsers`), and its
+  password is explicitly locked (`passwd -l root`, defense-in-depth). Reachable
+  only via the admin's sudo.
+
+### Why `NOPASSWD:ALL` + locked passwords
+
+Because provisioning deliberately sets no passwords, the escalation path has to
+work without one — which is exactly what this combination provides:
+
+- With **no password hash** on the box, a password-*prompting* sudo rule
+  (`ALL=(ALL) ALL`, or Fedora's default `%wheel` rule) can never be satisfied —
+  the admin could SSH in but **never escalate**. `NOPASSWD:ALL` is the only rule
+  that works at first boot, and it's what bootstraps everything else.
+- `lock_passwd: true` is almost a no-op while no password exists (there's no hash
+  to lock), but it's the safe default and the first `passwd` you run replaces it.
+- The **admin's SSH private key is effectively root** (passwordless sudo). Protect
+  it — generate it encrypted (`ENCRYPT_KEYS=yes`, the default).
+
+### Setting passwords later (over SSH)
+
+SSH in as the admin (key auth), then use `sudo passwd` — it runs as root, so it
+never asks for the *old* password:
+
+```bash
+ssh -i ~/.ssh/admin-<DOMAIN> admin@<host>
+sudo passwd admin          # set the admin's own password
+sudo passwd appuser        # set the standard user's password
+sudo passwd root           # set root's password (this also unlocks it — only if you
+                           # really want console root; SSH root stays disabled)
+```
+
+Password SSH login stays disabled (`PasswordAuthentication no`), so these
+passwords only apply to the local console and to `sudo` — not to SSH.
+
+### Switching the admin to password-required sudo
+
+Once the admin has a password (above), you can drop the passwordless rule:
+
+```bash
+sudo passwd admin                                   # 1. ensure a password exists first!
+sudo rm /etc/sudoers.d/90-cloud-init-users          # 2. remove cloud-init's NOPASSWD rule
+# admin now falls back to Fedora's default `%wheel ALL=(ALL) ALL` — password-prompted sudo
+sudo -k && sudo -v                                  # 3. verify you can still authenticate
+```
+
+> ⚠️ **Order matters.** Set the password *before* removing the `NOPASSWD` rule.
+> Remove it first and you lock yourself out of sudo (no password to fall back on).
+> To make it permanent for future VMs, change the admin's `sudo:` line in
+> `user-data.yaml` and rebuild instead.
+
 ## Layout
 
 The repo itself only holds the tool and its inputs:
