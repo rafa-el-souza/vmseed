@@ -1,0 +1,33 @@
+# fedora-cloud.sh configuration — simple KEY=VALUE, one per line.
+# Copy to fedora-cloud.conf and edit. Pass with: fedora-cloud.sh --config fedora-cloud.conf <cmd>
+#
+# '#' comments and blank lines are ignored. Surrounding whitespace is trimmed.
+# Unknown keys or malformed values are rejected. Any key you omit keeps the
+# built-in default shown below.
+
+# --- seed / paths ---
+# TEMPLATE=./user-data.yaml            # cloud-config template
+# KEYS_DIR=./keys                      # where the *.pub files live
+# STD_KEY_FILE=./keys/appuser.pub      # defaults to KEYS_DIR/appuser.pub
+# ADM_KEY_FILE=./keys/admin.pub        # defaults to KEYS_DIR/admin.pub
+# BUILD_DIR=./build                    # generated seed + overlay
+# IMAGES_DIR=./images                  # downloaded images + CHECKSUM + keyring
+# INSTANCE_ID=fedora-01                # cloud-init instance-id  [A-Za-z0-9._-]
+# VM_HOSTNAME=fedora-01                # guest hostname          [A-Za-z0-9._-]
+
+# --- libvirt / boot ---
+# DOMAIN=fedora-cloud-01               # libvirt domain name     [A-Za-z0-9._-]
+# RAM_MB=2048                          # memory, positive integer
+# VCPUS=2                              # vCPUs, positive integer
+# LIBVIRT_URI=qemu:///session          # libvirt connection URI (unprivileged user session)
+# NETWORK=user                         # virt-install --network (session-safe user networking;
+#                                      # use 'network=default' only with a system URI: qemu:///system)
+# OSINFO=detect=on,require=off         # virt-install --osinfo value
+# OVMF_CODE=/usr/share/edk2/ovmf/OVMF_CODE.fd  # explicit UEFI firmware (optional)
+
+# --- download / verification ---
+# VER=44                               # Fedora release, positive integer
+# ARCH=x86_64                          # x86_64 | aarch64 | ppc64le | s390x
+# FEDORA_GPG_URL=https://fedoraproject.org/fedora.gpg   # https:// only
+# CHECKSUM_URL=                        # https:// full CHECKSUM url (skips discovery)
+# COMPOSE=1.5                          # compose id (N or N.N); builds the CHECKSUM name

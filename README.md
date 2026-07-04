@@ -48,41 +48,63 @@ instead of locking you out.
 ## Layout
 
 ```
-fedora-cloud.sh  # single entry point: build | boot | run | help
-user-data.yaml   # cloud-config TEMPLATE (PLACEHOLDER_* tokens)
-keys/            # your *.pub files go here (private keys are git-ignored)
-build/           # generated: user-data, meta-data, seed.iso, overlay (git-ignored)
-images/          # downloaded qcow2 + CHECKSUM + fedora.gpg (git-ignored)
+fedora-cloud.sh          # single entry point: build | boot | run | help
+fedora-cloud.conf.example # sample config — copy to fedora-cloud.conf and edit
+user-data.yaml           # cloud-config TEMPLATE (PLACEHOLDER_* tokens)
+keys/                    # your *.pub files go here (private keys are git-ignored)
+build/                   # generated: user-data, meta-data, seed.iso, overlay (git-ignored)
+images/                  # downloaded qcow2 + CHECKSUM + fedora.gpg (git-ignored)
 ```
 
-Everything is one script, `fedora-cloud.sh`, with three subcommands:
+Everything is one script, `fedora-cloud.sh`, with three subcommands. All of them
+require a `--config <file>` (see [Configuration](#configuration)):
 
 | Command | Does |
 |---------|------|
-| `fedora-cloud.sh build` | render `keys/*.pub` into `build/user-data` (+ optional `seed.iso`) |
-| `fedora-cloud.sh boot [--fresh] <image> [MODE]` | boot an existing image under libvirt |
-| `fedora-cloud.sh run [MODE\|--download-only]` | download + verify + build + boot, end-to-end |
+| `fedora-cloud.sh --config <f> build` | render `keys/*.pub` into `build/user-data` (+ optional `seed.iso`) |
+| `fedora-cloud.sh --config <f> boot [--fresh] <image> [MODE]` | boot an existing image under libvirt |
+| `fedora-cloud.sh --config <f> run [MODE\|--download-only]` | download + verify + build + boot, end-to-end |
 
 `MODE` is `bios` (default), `uefi`, or `uefi-secure` — see [Image variants](#image-variants).
 
-## Quick start (one command)
+## Configuration
 
-Once your keys are in `keys/`, `run` does everything — downloads the image,
-**verifies its GPG signature and SHA-256 checksum**, builds the seed, and boots:
+All settings come from a required `--config` file in simple `KEY=VALUE` format
+(no environment variables). Start from the sample:
 
 ```bash
-./fedora-cloud.sh run              # BIOS / Cloud Base Generic image
-./fedora-cloud.sh run uefi         # UKI image (UEFI)
-./fedora-cloud.sh run uefi-secure  # UKI image + Secure Boot
-./fedora-cloud.sh run --download-only   # fetch + verify BOTH variants, no boot
+cp fedora-cloud.conf.example fedora-cloud.conf
+$EDITOR fedora-cloud.conf
+```
+
+The file is **parsed, never sourced** (so a config file cannot execute code), and
+every value is **strictly validated** — unknown keys, malformed lines, and
+out-of-range values are rejected with a `config:<line>` error. Any key you omit
+keeps its built-in default. Recognised keys are documented in the sample; the
+common ones: `DOMAIN`, `RAM_MB`, `VCPUS`, `LIBVIRT_URI`, `VER`, `ARCH`,
+`OVMF_CODE`, and `COMPOSE` / `CHECKSUM_URL` (to pin a download).
+
+Your personal `fedora-cloud.conf` is git-ignored; only the `.example` is tracked.
+
+## Quick start (one command)
+
+With `keys/` populated and a config file ready, `run` does everything —
+downloads the image, **verifies its GPG signature and SHA-256 checksum**, builds
+the seed, and boots:
+
+```bash
+./fedora-cloud.sh --config fedora-cloud.conf run              # BIOS / Cloud Base Generic image
+./fedora-cloud.sh --config fedora-cloud.conf run uefi         # UKI image (UEFI)
+./fedora-cloud.sh --config fedora-cloud.conf run uefi-secure  # UKI image + Secure Boot
+./fedora-cloud.sh --config fedora-cloud.conf run --download-only   # fetch + verify BOTH, no boot
 ```
 
 It fetches Fedora's OpenPGP keyring, discovers the current `CHECKSUM` file,
 verifies its signature with `gpgv`, resolves the exact image filenames **from the
 verified checksum** (so nothing is hardcoded to a compose number), downloads the
-qcow2, and checks its SHA-256 before booting. Override the release with
-`VER=44`, or pin a compose with `COMPOSE=1.5` / `CHECKSUM_URL=...` if
-auto-discovery is blocked by a mirror.
+qcow2, and checks its SHA-256 before booting. Set `VER=44` in the config, or pin
+a compose with `COMPOSE=1.5` / `CHECKSUM_URL=...` if auto-discovery is blocked by
+a mirror.
 
 The steps below are the manual equivalent if you already have an image.
 
@@ -124,11 +146,12 @@ attestation.
    ssh-keygen -t ed25519 -f keys/admin   -C admin@fedora
    ```
 
-2. Build the seed:
+2. Build the seed (`--config` is required):
 
    ```bash
-   chmod +x fedora-cloud.sh   # first time only
-   ./fedora-cloud.sh build
+   chmod +x fedora-cloud.sh                          # first time only
+   cp fedora-cloud.conf.example fedora-cloud.conf    # first time only
+   ./fedora-cloud.sh --config fedora-cloud.conf build
    ```
 
    This renders `build/user-data`, validates it with `cloud-init schema`, and
@@ -142,9 +165,9 @@ attestation.
    the image variant — see [Image variants](#image-variants) below):
 
    ```bash
-   ./fedora-cloud.sh boot Fedora-Cloud-Base.qcow2 bios              # traditional hybrid image
-   ./fedora-cloud.sh boot Fedora-Cloud-Base-UKI.qcow2 uefi          # UKI image (UEFI-only)
-   ./fedora-cloud.sh boot Fedora-Cloud-Base-UKI.qcow2 uefi-secure   # UKI + Secure Boot
+   ./fedora-cloud.sh --config fedora-cloud.conf boot Fedora-Cloud-Base.qcow2 bios            # hybrid image
+   ./fedora-cloud.sh --config fedora-cloud.conf boot Fedora-Cloud-Base-UKI.qcow2 uefi        # UKI (UEFI)
+   ./fedora-cloud.sh --config fedora-cloud.conf boot Fedora-Cloud-Base-UKI.qcow2 uefi-secure # UKI + Secure Boot
    ```
 
    `boot` feeds `build/user-data` + `build/meta-data` to `virt-install
@@ -158,13 +181,22 @@ attestation.
    data, ...). The `build/seed.iso` from `build` is only needed for manual
    qemu/`cloud-localds` workflows.
 
-4. Connect (get the guest IP from libvirt's NAT lease):
+4. Connect. With the default **`qemu:///session` + `NETWORK=user`**, the guest is
+   NAT'd behind user-mode networking, so `domifaddr` won't show a routable lease —
+   use the serial console:
+
+   ```bash
+   virsh -c qemu:///session console fedora-cloud-01   # Ctrl+] to exit
+   ```
+
+   For direct SSH by IP, run on the **system** libvirt with a managed NAT network —
+   set `LIBVIRT_URI=qemu:///system` and `NETWORK=network=default` in your config,
+   then:
 
    ```bash
    virsh -c qemu:///system domifaddr fedora-cloud-01
    ssh -i keys/admin   admin@<IP>
    ssh -i keys/appuser appuser@<IP>
-   # or drop to the serial console:  virsh -c qemu:///system console fedora-cloud-01
    ```
 
 ## Verify on the guest
@@ -190,10 +222,12 @@ Logs: `/var/log/cloud-init.log`, `/var/log/cloud-init-output.log`.
 The mirror blocked the directory listing (some mirrors and the bot-protected
 `dl.fedoraproject.org` do). Bypass discovery by pinning the compose or the URL:
 
-```bash
-COMPOSE=1.5 ./fedora-cloud.sh run uefi
+Set one of these in your config file, then re-run:
+
+```ini
+COMPOSE=1.5
 # or, fully explicit:
-CHECKSUM_URL="https://download.fedoraproject.org/pub/fedora/linux/releases/44/Cloud/x86_64/images/Fedora-Cloud-44-1.5-x86_64-CHECKSUM" ./fedora-cloud.sh run uefi
+CHECKSUM_URL=https://download.fedoraproject.org/pub/fedora/linux/releases/44/Cloud/x86_64/images/Fedora-Cloud-44-1.5-x86_64-CHECKSUM
 ```
 
 Find the current compose id on the [Fedora Cloud download page](https://fedoraproject.org/cloud/download/).
@@ -208,8 +242,11 @@ A truncated or tampered download. Delete the file from `images/` and re-run; if 
 fails again from a different mirror, do not boot it.
 
 **`virsh domifaddr` shows no address (or `N/A`).**
-The lease appears only after the guest has booted and cloud-init has brought up
-the network — give it 20–60s on first boot. If it never appears:
+Expected with the default `qemu:///session` + `NETWORK=user`: user-mode
+networking gives no queryable lease. Reach the guest via the serial console
+(`virsh -c qemu:///session console fedora-cloud-01`, Ctrl+] to exit). For a
+routable IP, switch to a system NAT setup — set `LIBVIRT_URI=qemu:///system` and
+`NETWORK=network=default`, then:
 - Watch progress on the serial console: `virsh -c qemu:///system console fedora-cloud-01` (Ctrl+] to exit).
 - Confirm the VM is on the NAT network: `virsh -c qemu:///system domiflist fedora-cloud-01`.
 - Ensure the default network is active: `virsh -c qemu:///system net-start default`.
@@ -224,8 +261,16 @@ Early UKI images were subject to a shim bug where the first boot can fail and ne
 a reset. Force one boot cycle:
 
 ```bash
-virsh -c qemu:///system reset fedora-cloud-01
+virsh -c qemu:///session reset fedora-cloud-01
 ```
+
+**`error: config:<n>: ...` on startup.**
+The config file failed strict validation at that line — e.g. a non-integer
+`RAM_MB`, an `http://` URL, an unknown key, or a line that isn't `KEY=VALUE`. Fix
+that line; see `fedora-cloud.conf.example` for the allowed keys and value formats.
+
+**`error: '--config <file>' is required ...`.**
+`build`, `boot`, and `run` all need `--config`. Only `help` runs without it.
 
 **`update-crypto-policies --set FUTURE` locked out an old client.**
 `FUTURE` disables SHA-1/CBC/weak RSA system-wide. Connect via the serial console
@@ -234,8 +279,8 @@ or edit the `runcmd` in `user-data.yaml` before the next build.
 
 **Re-running `boot` uses the old disk state.**
 The qcow2 overlay in `build/` persists between runs. Reset it with
-`./fedora-cloud.sh boot --fresh <image> <mode>`, which recreates the overlay from
-the pristine base — and remember cloud-init only re-applies on a fresh instance.
+`./fedora-cloud.sh --config <f> boot --fresh <image> <mode>`, which recreates the
+overlay from the pristine base — cloud-init only re-applies on a fresh instance.
 
 ## References
 

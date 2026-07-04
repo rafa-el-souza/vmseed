@@ -3,7 +3,7 @@
 Place the **public** keys (`.pub`) for each user here. `fedora-cloud.sh build`
 reads them and splices their contents into the generated `build/user-data`.
 
-Expected files (override paths via `STD_KEY_FILE` / `ADM_KEY_FILE` env vars if you prefer):
+Expected files (override paths with `STD_KEY_FILE` / `ADM_KEY_FILE` in your `--config` file if you prefer):
 
 - `appuser.pub` — public key for the standard user
 - `admin.pub`   — public key for the admin user

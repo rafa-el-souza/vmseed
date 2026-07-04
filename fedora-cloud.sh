@@ -4,7 +4,7 @@
 # under libvirt. Two SSH-only users (standard + admin), hardened sshd, verified
 # image downloads. Covers both the traditional (BIOS) and UKI (UEFI) variants.
 #
-# Requires bash >= 4.3 (namerefs, dynamic-scope locals).
+# Requires bash >= 4.3 (namerefs, associative arrays, dynamic-scope locals).
 #
 # PUBLIC API (subcommands):
 #   build                                 render keys into build/user-data (+seed.iso)
@@ -14,43 +14,22 @@
 #
 #   MODE = bios | uefi | uefi-secure      (bios -> Generic image, uefi* -> UKI image)
 #
+# GLOBAL OPTION:
+#   --config <file>   Load configuration from a KEY=VALUE file. REQUIRED for
+#                     build/boot/run (help does not need it). See the shipped
+#                     fedora-cloud.conf.example for the recognised keys.
+#
+# Configuration comes only from the --config file (no environment variables).
+# The file is parsed, never sourced, and every value is strictly validated.
+#
 # Everything below lives inside main(): there are no global variables — the
 # nested cmd_*/_* functions read main's locals via bash dynamic scoping.
 # Naming: cmd_*  = public commands,  _*  = private helpers.
 set -euo pipefail
 
 main() {
-  # ========================= CONFIGURATION =========================
-  # All values are locals; override any of them via the matching env var.
   local self="${0##*/}"
   local script_dir; script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-
-  # Paths / seed
-  local template="${TEMPLATE:-$script_dir/user-data.yaml}"
-  local keys_dir="${KEYS_DIR:-$script_dir/keys}"
-  local std_key_file="${STD_KEY_FILE:-$keys_dir/appuser.pub}"
-  local adm_key_file="${ADM_KEY_FILE:-$keys_dir/admin.pub}"
-  local build_dir="${BUILD_DIR:-$script_dir/build}"
-  local images_dir="${IMAGES_DIR:-$script_dir/images}"
-  local instance_id="${INSTANCE_ID:-fedora-01}"
-  local vm_hostname="${VM_HOSTNAME:-fedora-01}"
-
-  # libvirt / boot
-  local domain="${DOMAIN:-fedora-cloud-01}"
-  local ram_mb="${RAM_MB:-2048}"
-  local vcpus="${VCPUS:-2}"
-  local libvirt_uri="${LIBVIRT_URI:-qemu:///system}"
-  local network="${NETWORK:-network=default}"
-  local osinfo="${OSINFO:-detect=on,require=off}"
-  local ovmf_code="${OVMF_CODE:-}"
-
-  # download / verification
-  local ver="${VER:-44}"
-  local arch="${ARCH:-x86_64}"
-  local base_url="https://download.fedoraproject.org/pub/fedora/linux/releases/${ver}/Cloud/${arch}/images"
-  local fedora_gpg_url="${FEDORA_GPG_URL:-https://fedoraproject.org/fedora.gpg}"
-  local checksum_url="${CHECKSUM_URL:-}"
-  local compose="${COMPOSE:-}"
 
   # ===================== PRIVATE API (helpers) =====================
   # Diagnostics go to stderr so a function's stdout is only its return value.
@@ -65,6 +44,67 @@ main() {
     done
   }
 
+  _require_config() {  # gate for commands that cannot run without a config file
+    [[ -n "$config_file" ]] || _die "'--config <file>' is required for the '$1' command"
+  }
+
+  # ---- config: known keys, per-key validation, strict KEY=VALUE parser ----
+  _is_known_key() {
+    case "$1" in
+      TEMPLATE|KEYS_DIR|STD_KEY_FILE|ADM_KEY_FILE|BUILD_DIR|IMAGES_DIR|\
+      INSTANCE_ID|VM_HOSTNAME|DOMAIN|RAM_MB|VCPUS|LIBVIRT_URI|NETWORK|OSINFO|\
+      OVMF_CODE|VER|ARCH|FEDORA_GPG_URL|CHECKSUM_URL|COMPOSE) return 0 ;;
+      *) return 1 ;;
+    esac
+  }
+
+  _validate_value() {  # _validate_value <key> <value> <lineno>  — die on bad input
+    local key="$1" val="$2" ln="$3"
+    [[ -n "$val" ]] || _die "config:$ln: empty value for $key"
+    local where="config:$ln: $key"
+    case "$key" in
+      RAM_MB|VCPUS|VER)
+        [[ "$val" =~ ^[1-9][0-9]*$ ]] || _die "$where must be a positive integer, got '$val'" ;;
+      ARCH)
+        case "$val" in x86_64|aarch64|ppc64le|s390x) ;; *) _die "$where invalid: '$val'" ;; esac ;;
+      COMPOSE)
+        [[ "$val" =~ ^[0-9]+(\.[0-9]+)*$ ]] || _die "$where must look like N or N.N, got '$val'" ;;
+      FEDORA_GPG_URL|CHECKSUM_URL)
+        { [[ "$val" == https://* ]] && [[ "$val" != *[[:space:]]* ]]; } \
+          || _die "$where must be an https:// URL with no whitespace" ;;
+      LIBVIRT_URI)
+        [[ "$val" =~ ^[a-z]+(\+[a-z]+)?:// ]] || _die "$where must be a libvirt URI (e.g. qemu:///session)" ;;
+      DOMAIN|INSTANCE_ID|VM_HOSTNAME)
+        [[ "$val" =~ ^[A-Za-z0-9._-]+$ ]] || _die "$where may contain only [A-Za-z0-9._-], got '$val'" ;;
+      OSINFO)
+        [[ "$val" =~ ^[A-Za-z0-9=,._:-]+$ ]] || _die "$where has invalid characters: '$val'" ;;
+      NETWORK)
+        [[ "$val" =~ ^[A-Za-z0-9=,._:/-]+$ ]] || _die "$where has invalid characters: '$val'" ;;
+      TEMPLATE|KEYS_DIR|STD_KEY_FILE|ADM_KEY_FILE|BUILD_DIR|IMAGES_DIR|OVMF_CODE)
+        [[ "$val" != *[[:space:]]* ]] || _die "$where (a path) must not contain whitespace" ;;
+    esac
+  }
+
+  _load_config() {  # _load_config <file>  — parse into cfg[]; strict, never sourced
+    local file="$1" lineno=0 line key val
+    [[ -f "$file" ]] || _die "config file not found: $file"
+    [[ -r "$file" ]] || _die "config file not readable: $file"
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      lineno=$((lineno + 1))
+      line="${line#"${line%%[![:space:]]*}"}"   # ltrim
+      line="${line%"${line##*[![:space:]]}"}"   # rtrim
+      [[ -z "$line" || "$line" == \#* ]] && continue
+      [[ "$line" == *=* ]] || _die "config:$lineno: not KEY=VALUE: '$line'"
+      key="${line%%=*}"; val="${line#*=}"
+      key="${key%"${key##*[![:space:]]}"}"; key="${key#"${key%%[![:space:]]*}"}"
+      val="${val#"${val%%[![:space:]]*}"}"; val="${val%"${val##*[![:space:]]}"}"
+      _is_known_key "$key" || _die "config:$lineno: unknown key: '$key'"
+      _validate_value "$key" "$val" "$lineno"
+      cfg["$key"]="$val"
+    done < "$file"
+  }
+
+  # ---- build helpers ----
   _assert_pubkey() {  # reject private keys / garbage before they reach the guest
     local key="$1"
     case "$key" in
@@ -101,6 +141,7 @@ main() {
     fi
   }
 
+  # ---- boot helpers ----
   _firmware_args() {  # _firmware_args <mode> <out_array_name>  — populate virt-install --boot
     local mode="$1"
     local -n _ref="$2"
@@ -139,13 +180,20 @@ main() {
 
   _print_connect_help() {
     printf '\n' >&2
-    _log "booted. Once cloud-init has run:"
-    printf '      virsh --connect %s domifaddr %s\n' "$libvirt_uri" "$domain" >&2
-    printf '      ssh -i keys/admin   admin@<IP>\n'                            >&2
-    printf '      ssh -i keys/appuser appuser@<IP>\n'                          >&2
-    printf '    console: virsh --connect %s console %s   (Ctrl+] to exit)\n' "$libvirt_uri" "$domain" >&2
+    _log "booted. Reach the guest on the serial console:"
+    printf '      virsh --connect %s console %s   (Ctrl+] to exit)\n' "$libvirt_uri" "$domain" >&2
+    if [[ "$network" == network=* ]]; then
+      # A libvirt-managed NAT network (system URI) yields a queryable lease.
+      _log "or find its IP and SSH in:"
+      printf '      virsh --connect %s domifaddr %s\n' "$libvirt_uri" "$domain" >&2
+      printf '      ssh -i keys/admin admin@<IP>   /   ssh -i keys/appuser appuser@<IP>\n' >&2
+    else
+      # User-mode networking (session default): no queryable lease.
+      _note "NETWORK=$network gives no queryable lease; use the console, or a system URI + NETWORK=network=default for direct SSH"
+    fi
   }
 
+  # ---- download / verification helpers ----
   _fetch_keyring() {  # cache Fedora's OpenPGP keyring locally
     local keyring="$1"
     if [[ ! -s "$keyring" ]]; then
@@ -154,7 +202,7 @@ main() {
     fi
   }
 
-  _resolve_checksum_url() {  # -> CHECKSUM url on stdout (env > compose > mirror discovery)
+  _resolve_checksum_url() {  # -> CHECKSUM url on stdout (explicit > compose > mirror discovery)
     if [[ -n "$checksum_url" ]]; then
       printf '%s\n' "$checksum_url"; return 0
     fi
@@ -166,7 +214,7 @@ main() {
     name="$(curl -fsSL "$base_url/" \
       | grep -oE "Fedora-Cloud-[0-9]+-[0-9.]+-${arch}-CHECKSUM" \
       | sort -u | tail -1 || true)"
-    [[ -n "$name" ]] || _die "could not auto-discover CHECKSUM; set CHECKSUM_URL or COMPOSE and retry"
+    [[ -n "$name" ]] || _die "could not auto-discover CHECKSUM; set CHECKSUM_URL or COMPOSE in the config and retry"
     printf '%s/%s\n' "$base_url" "$name"
   }
 
@@ -200,6 +248,7 @@ main() {
 
   # ===================== PUBLIC API (commands) =====================
   cmd_build() {
+    _require_config build
     _need awk
     local f
     for f in "$template" "$std_key_file" "$adm_key_file"; do
@@ -221,16 +270,17 @@ main() {
   }
 
   cmd_boot() {
+    _require_config boot
     local fresh=0
     if [[ "${1:-}" == "--fresh" ]]; then fresh=1; shift; fi
     local image="${1:-}"
-    [[ -n "$image" ]] || _die "usage: $self boot [--fresh] <image.qcow2> [bios|uefi|uefi-secure]"
+    [[ -n "$image" ]] || _die "usage: $self --config <file> boot [--fresh] <image.qcow2> [bios|uefi|uefi-secure]"
     local mode="${2:-bios}"
 
     _need virt-install virsh qemu-img
     local f
     for f in "$build_dir/user-data" "$build_dir/meta-data"; do
-      [[ -f "$f" ]] || _die "$f not found — run '$self build' first"
+      [[ -f "$f" ]] || _die "$f not found — run '$self --config <file> build' first"
     done
     [[ -f "$image" ]] || _die "image not found: $image"
 
@@ -261,11 +311,12 @@ main() {
   }
 
   cmd_run() {
+    _require_config run
     local mode="${1:-bios}" download_only=0
     case "$mode" in
       --download-only)        download_only=1 ;;
       bios|uefi|uefi-secure)  ;;
-      *) _die "usage: $self run [bios|uefi|uefi-secure|--download-only]" ;;
+      *) _die "usage: $self --config <file> run [bios|uefi|uefi-secure|--download-only]" ;;
     esac
 
     _need curl gpgv sha256sum
@@ -316,34 +367,96 @@ main() {
 $self — provision & boot a Fedora Cloud image with cloud-init
 
 Usage:
-  $self build                              render keys/*.pub into build/user-data
-  $self boot [--fresh] <image> [MODE]      boot an existing image under libvirt
-  $self run  [MODE|--download-only]        download + verify + build + boot
-  $self help                               this message
+  $self --config <file> build                         render keys/*.pub into build/user-data
+  $self --config <file> boot [--fresh] <image> [MODE] boot an existing image under libvirt
+  $self --config <file> run  [MODE|--download-only]   download + verify + build + boot
+  $self help                                          this message
 
 MODE:
   bios         Cloud Base Generic image (traditional hybrid)   [default]
   uefi         Cloud Base UKI image (UEFI-only)
   uefi-secure  Cloud Base UKI image + Secure Boot
 
-Examples:
-  $self run                 # fetch+verify+boot the BIOS image
-  $self run uefi            # ... the UKI image under UEFI
-  $self run --download-only # fetch+verify BOTH variants, no boot
-  $self boot --fresh images/Fedora-Cloud-Base-Generic-44-1.5.x86_64.qcow2 bios
+Configuration:
+  All settings come from the --config KEY=VALUE file (required for build/boot/run;
+  no environment variables). Copy fedora-cloud.conf.example, edit it, and pass it
+  with --config. Unknown keys and malformed values are rejected.
 
-Config is via env vars (see the CONFIGURATION block): VER, ARCH, DOMAIN,
-RAM_MB, VCPUS, LIBVIRT_URI, OVMF_CODE, COMPOSE, CHECKSUM_URL, ...
+Examples:
+  $self --config fedora-cloud.conf run                 # fetch+verify+boot BIOS image
+  $self --config fedora-cloud.conf run uefi            # ... the UKI image under UEFI
+  $self --config fedora-cloud.conf run --download-only # fetch+verify BOTH, no boot
+  $self --config fedora-cloud.conf build
 EOF
   }
 
+  # ========================= CONFIGURATION =========================
+  # Built-in defaults; every one is overridable via the --config file. Only
+  # file-provided values are validated (defaults are trusted). STD_KEY_FILE /
+  # ADM_KEY_FILE default to files under KEYS_DIR and are derived after loading.
+  local -A cfg=(
+    [TEMPLATE]="$script_dir/user-data.yaml"
+    [KEYS_DIR]="$script_dir/keys"
+    [BUILD_DIR]="$script_dir/build"
+    [IMAGES_DIR]="$script_dir/images"
+    [INSTANCE_ID]="fedora-01"
+    [VM_HOSTNAME]="fedora-01"
+    [DOMAIN]="fedora-cloud-01"
+    [RAM_MB]="2048"
+    [VCPUS]="2"
+    [LIBVIRT_URI]="qemu:///session"
+    [NETWORK]="user"
+    [OSINFO]="detect=on,require=off"
+    [VER]="44"
+    [ARCH]="x86_64"
+    [FEDORA_GPG_URL]="https://fedoraproject.org/fedora.gpg"
+  )
+
+  # ---------------- global option parsing (--config) ---------------
+  local config_file="" ; local -a rest=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --config)   shift; [[ $# -gt 0 ]] || _die "--config requires a file argument"; config_file="$1"; shift ;;
+      --config=*) config_file="${1#*=}"; shift ;;
+      --)         shift; while [[ $# -gt 0 ]]; do rest+=("$1"); shift; done ;;
+      *)          rest+=("$1"); shift ;;
+    esac
+  done
+  [[ -n "$config_file" ]] && _load_config "$config_file"
+
+  # Derived defaults (respect a KEYS_DIR override from the config file).
+  : "${cfg[STD_KEY_FILE]:=${cfg[KEYS_DIR]}/appuser.pub}"
+  : "${cfg[ADM_KEY_FILE]:=${cfg[KEYS_DIR]}/admin.pub}"
+
+  # Project the validated config into readable locals used by the commands.
+  local template="${cfg[TEMPLATE]}"
+  local std_key_file="${cfg[STD_KEY_FILE]}"
+  local adm_key_file="${cfg[ADM_KEY_FILE]}"
+  local build_dir="${cfg[BUILD_DIR]}"
+  local images_dir="${cfg[IMAGES_DIR]}"
+  local instance_id="${cfg[INSTANCE_ID]}"
+  local vm_hostname="${cfg[VM_HOSTNAME]}"
+  local domain="${cfg[DOMAIN]}"
+  local ram_mb="${cfg[RAM_MB]}"
+  local vcpus="${cfg[VCPUS]}"
+  local libvirt_uri="${cfg[LIBVIRT_URI]}"
+  local network="${cfg[NETWORK]}"
+  local osinfo="${cfg[OSINFO]}"
+  local ovmf_code="${cfg[OVMF_CODE]:-}"
+  local ver="${cfg[VER]}"
+  local arch="${cfg[ARCH]}"
+  local fedora_gpg_url="${cfg[FEDORA_GPG_URL]}"
+  local checksum_url="${cfg[CHECKSUM_URL]:-}"
+  local compose="${cfg[COMPOSE]:-}"
+  local base_url="https://download.fedoraproject.org/pub/fedora/linux/releases/${ver}/Cloud/${arch}/images"
+
   # ========================== DISPATCH ==========================
-  local subcommand="${1:-help}"
-  shift || true
+  local subcommand="${rest[0]:-help}"
+  rest=("${rest[@]:1}")
   case "$subcommand" in
-    build)          cmd_build "$@" ;;
-    boot)           cmd_boot  "$@" ;;
-    run)            cmd_run   "$@" ;;
+    build)          cmd_build "${rest[@]}" ;;
+    boot)           cmd_boot  "${rest[@]}" ;;
+    run)            cmd_run   "${rest[@]}" ;;
     help|-h|--help) cmd_help ;;
     *) _die "unknown command '$subcommand' (try: $self help)" ;;
   esac
