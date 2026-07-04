@@ -507,6 +507,35 @@ validates signatures, not TPM measurements). To make it succeed, set `TPM=yes`
 in the config (attaches an emulated TPM 2.0; needs `swtpm` on the host:
 `sudo dnf install swtpm swtpm-tools`) and rebuild.
 
+**`systemd-tpm2-setup.service` still fails *with* `TPM=yes` (Fedora 44).**
+The TPM is working — check the journal and you'll see the real work succeeded:
+
+```
+SRK already stored in the TPM.
+Successfully written anchor secret to '/var/lib/systemd/nvpcr/nvpcr-anchor.cred'.
+2 NvPCRs already initialized.
+Failed to write anchor secret file to
+'/boot/efi/loader/credentials/nvpcr-anchor.….cred': Permission denied
+```
+
+Only the last line fails, and it's an **SELinux policy gap**, not a TPM fault.
+systemd 258/259 added [NvPCR](https://www.freedesktop.org/software/systemd/man/latest/systemd-tpm2-setup.service.html),
+which mirrors the anchor secret to the EFI System Partition; Fedora 44's
+`selinux-policy` doesn't yet allow the early-boot `init_t` domain to create files
+on the vfat ESP (`dosfs_t`). Confirm with:
+
+```bash
+sudo ausearch -m avc -ts boot | grep -i tpm2
+# avc: denied { create } … scontext=…init_t tcontext=…dosfs_t tclass=file
+```
+
+The SRK and NvPCRs are provisioned in TPM NV storage (and mirrored to
+`/var/lib/systemd/nvpcr/`); only the ESP copy — which nothing in a cloud VM
+consumes — is missing. **Leave it as-is**: masking the unit would skip real SRK
+setup on future TPM/firmware changes, and an `audit2allow` module would grant
+all of `init_t` write access to the ESP just to silence a cosmetic failure. The
+proper fix is an upstream `selinux-policy` update.
+
 **UKI image fails on the very first boot.**
 Early UKI images were subject to a shim bug where the first boot can fail and need
 a reset. Force one boot cycle:
