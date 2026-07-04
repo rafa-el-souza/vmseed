@@ -168,7 +168,9 @@ require a `--config <file>` (see [Configuration](#configuration)):
 | `fedora-cloud.sh --config <f> boot [--fresh] <image> [MODE]` | boot an existing image under libvirt |
 | `fedora-cloud.sh --config <f> run [MODE\|--download-only]` | download + verify + build + boot, end-to-end |
 
-`MODE` is `bios` (default), `uefi`, or `uefi-secure` — see [Image variants](#image-variants).
+`MODE` is the VM **firmware** — `bios` (default), `uefi`, or `uefi-secure`. The
+**image** is chosen separately by `IMAGE_VARIANT` (`generic` default, or `uki`) —
+see [Image variants](#image-variants).
 
 ## Configuration
 
@@ -192,8 +194,9 @@ built-in default; the two directory keys do **not** and must be set:
 
 Both are auto-created if missing. **Paths are literal** (no `~`/variable
 expansion) — use an absolute path. Other common keys: `STD_USER` / `ADMIN_USER`
-(the two usernames), `DOMAIN`, `RAM_MB`, `VCPUS`, `LIBVIRT_URI`, `VER`, `ARCH`,
-`OVMF_CODE`, and `COMPOSE` / `CHECKSUM_URL` (to pin a download).
+(the two usernames), `IMAGE_VARIANT` (`generic`/`uki`), `DOMAIN`, `RAM_MB`,
+`VCPUS`, `LIBVIRT_URI`, `VER`, `ARCH`, `OVMF_CODE`, and `COMPOSE` /
+`CHECKSUM_URL` (to pin a download).
 
 Your personal `fedora-cloud.conf` is git-ignored; only the `.example` is tracked.
 
@@ -320,10 +323,12 @@ downloads the image, **verifies its GPG signature and SHA-256 checksum**, builds
 the seed, and boots:
 
 ```bash
-./fedora-cloud.sh --config fedora-cloud.conf run              # BIOS / Cloud Base Generic image
-./fedora-cloud.sh --config fedora-cloud.conf run uefi         # UKI image (UEFI)
-./fedora-cloud.sh --config fedora-cloud.conf run uefi-secure  # UKI image + Secure Boot
-./fedora-cloud.sh --config fedora-cloud.conf run --download-only   # fetch + verify BOTH, no boot
+# MODE = firmware; the image is IMAGE_VARIANT in the config (default: generic).
+./fedora-cloud.sh --config fedora-cloud.conf run              # generic image, BIOS
+./fedora-cloud.sh --config fedora-cloud.conf run uefi         # generic image, UEFI
+./fedora-cloud.sh --config fedora-cloud.conf run uefi-secure  # generic image, UEFI + Secure Boot
+# set IMAGE_VARIANT=uki in the config to fetch/boot the UKI image (uefi/uefi-secure only)
+./fedora-cloud.sh --config fedora-cloud.conf run --download-only   # fetch + verify BOTH variants, no boot
 ```
 
 It fetches Fedora's OpenPGP keyring, discovers the current `CHECKSUM` file,
@@ -337,23 +342,34 @@ The steps below are the manual equivalent if you already have an image.
 
 ## Image variants
 
-Fedora ships two Cloud Base variants. **The same `user-data.yaml` works on
-both** — cloud-init behaves identically; only the boot firmware differs.
+Two independent choices: **which image** (`IMAGE_VARIANT`) and **which VM
+firmware** (`MODE`). They are not the same axis — the Generic image is a hybrid
+that boots under BIOS *or* UEFI. **The same `user-data.yaml` works on both
+images** — cloud-init behaves identically.
 
-| | Traditional (non-UKI) | UKI |
+| `IMAGE_VARIANT` | `generic` (default) | `uki` |
 |---|---|---|
-| Firmware | Hybrid **BIOS + UEFI** | **UEFI-only** |
+| Firmware support | Hybrid **BIOS + UEFI** | **UEFI-only** |
 | Bootloader | shim → GRUB → kernel | shim → UKI directly (no GRUB) |
 | initramfs | built on the host by dracut | prebuilt, baked into the signed kernel image |
 | Kernel cmdline | editable via GRUB / `grubby` | **sealed inside the signed UKI** — not freely editable |
 | Secure Boot | signs kernel only (initrd unsigned) | signs kernel **+ initrd + cmdline** |
 | Confidential computing | noisy TPM measurements | **predictable, attestable** measurements |
-| `MODE` argument | `bios` | `uefi` (or `uefi-secure`) |
 
-**Which to use:** the non-UKI image is the safe default — BIOS/UEFI-compatible
-and you can tweak kernel params freely. Choose the UKI image when you
-specifically need Secure Boot with a signed initrd or confidential-computing
-attestation.
+Compatible `MODE` per variant:
+
+| image ↓ / MODE → | `bios` | `uefi` | `uefi-secure` |
+|---|:---:|:---:|:---:|
+| `generic` | ✓ | ✓ | ✓ |
+| `uki` | ✗ | ✓ | ✓ |
+
+`run` refuses the one impossible pairing (`uki` + `bios`). `boot` takes an
+explicit image path, so pairing it sensibly with `MODE` is up to you.
+
+**Which to use:** `generic` is the safe default — boots any firmware and you can
+tweak kernel params freely. Choose `uki` when you specifically need Secure Boot
+with a signed initrd or confidential-computing attestation (and pair it with
+`uefi`/`uefi-secure`).
 
 > ⚠️ **UKI kernel cmdline caveat.** This project does not set any kernel command
 > line, so both variants work as-is. But if you later add tooling that edits
@@ -390,13 +406,14 @@ attestation.
    > `sudo dnf install cloud-utils virt-install libvirt qemu-img edk2-ovmf`
    > and ensure libvirtd is running: `sudo systemctl enable --now libvirtd`
 
-3. Boot the image under libvirt with `boot` (pick the firmware mode to match
-   the image variant — see [Image variants](#image-variants) below):
+3. Boot an image under libvirt with `boot <image> <MODE>`. `MODE` is the VM
+   firmware; make sure it's compatible with the image you pass (a UKI image needs
+   `uefi`/`uefi-secure` — see [Image variants](#image-variants) below):
 
    ```bash
-   ./fedora-cloud.sh --config fedora-cloud.conf boot Fedora-Cloud-Base.qcow2 bios            # hybrid image
-   ./fedora-cloud.sh --config fedora-cloud.conf boot Fedora-Cloud-Base-UKI.qcow2 uefi        # UKI (UEFI)
-   ./fedora-cloud.sh --config fedora-cloud.conf boot Fedora-Cloud-Base-UKI.qcow2 uefi-secure # UKI + Secure Boot
+   ./fedora-cloud.sh --config fedora-cloud.conf boot Fedora-Cloud-Base-Generic.qcow2 bios         # hybrid image, BIOS
+   ./fedora-cloud.sh --config fedora-cloud.conf boot Fedora-Cloud-Base-Generic.qcow2 uefi         # same image, UEFI
+   ./fedora-cloud.sh --config fedora-cloud.conf boot Fedora-Cloud-Base-UKI.qcow2 uefi-secure      # UKI image, Secure Boot
    ```
 
    `boot` attaches the seed per [`SEED_METHOD`](#seed-delivery), boots from a

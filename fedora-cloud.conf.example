@@ -57,7 +57,12 @@ BASE_IMAGE_DIR=/var/lib/fedora-cloud/base
 # NVRAM_PATH=/var/lib/fedora-cloud/web01_VARS.fd  # per-VM UEFI varstore path (uefi/uefi-secure
 #                                      # only; empty = libvirt's default nvram dir)
 
-# --- download / verification ---
+# --- image + download / verification ---
+# IMAGE_VARIANT=generic                # which Cloud Base image to fetch/boot:
+#                                      #   generic  hybrid BIOS+UEFI, works with any MODE (default)
+#                                      #   uki      UEFI-only (MODE must be uefi/uefi-secure)
+#                                      # NOTE: MODE (bios|uefi|uefi-secure) is the VM *firmware*,
+#                                      # passed to run/boot — it is independent of IMAGE_VARIANT.
 # VER=44                               # Fedora release, positive integer
 # ARCH=x86_64                          # x86_64 | aarch64 | ppc64le | s390x
 # FEDORA_GPG_URL=https://fedoraproject.org/fedora.gpg   # https:// only

@@ -64,7 +64,7 @@ main() {
       TEMPLATE|KEYS_DIR|STD_KEY_FILE|ADM_KEY_FILE|TMUX_CONF|OVERLAY_IMAGE_DIR|\
       BASE_IMAGE_DIR|STD_USER|ADMIN_USER|GENERATE_KEYS|ENCRYPT_KEYS|SEED_METHOD|\
       INSTANCE_ID|VM_HOSTNAME|DOMAIN|RAM_MB|VCPUS|LIBVIRT_URI|NETWORK|OSINFO|OVMF_CODE|\
-      NVRAM_PATH|VER|ARCH|FEDORA_GPG_URL|CHECKSUM_URL|COMPOSE) return 0 ;;
+      NVRAM_PATH|IMAGE_VARIANT|VER|ARCH|FEDORA_GPG_URL|CHECKSUM_URL|COMPOSE) return 0 ;;
       *) return 1 ;;
     esac
   }
@@ -91,6 +91,8 @@ main() {
         [[ "$val" =~ ^(yes|no)$ ]] || _die "$where must be 'yes' or 'no', got '$val'" ;;
       SEED_METHOD)
         [[ "$val" =~ ^(seed-iso|cloud-init)$ ]] || _die "$where must be 'seed-iso' or 'cloud-init', got '$val'" ;;
+      IMAGE_VARIANT)
+        [[ "$val" =~ ^(generic|uki)$ ]] || _die "$where must be 'generic' or 'uki', got '$val'" ;;
       STD_USER|ADMIN_USER)
         [[ "$val" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] \
           || _die "$where must be a valid Linux username (^[a-z_][a-z0-9_-]{0,31}$), got '$val'"
@@ -423,12 +425,18 @@ main() {
   cmd_run() {
     _require_config run
     _require_base_dir
+    # MODE is the VM firmware; the image to fetch is IMAGE_VARIANT (independent).
     local mode="${1:-bios}" download_only=0
     case "$mode" in
       --download-only)        download_only=1 ;;
       bios|uefi|uefi-secure)  ;;
       *) _die "usage: $self --config <file> run [bios|uefi|uefi-secure|--download-only]" ;;
     esac
+    # The only impossible combination: the UKI image is UEFI-only. (Fail before
+    # any network work.)
+    if [[ "$download_only" != "1" && "$image_variant" == "uki" && "$mode" == "bios" ]]; then
+      _die "IMAGE_VARIANT=uki is UEFI-only; use MODE 'uefi'/'uefi-secure', or IMAGE_VARIANT=generic"
+    fi
 
     _need curl gpgv sha256sum
     mkdir -p "$base_image_dir"
@@ -456,20 +464,20 @@ main() {
       _fetch_and_verify_image "$generic_img" "$checksum_verified"
       _fetch_and_verify_image "$uki_img"     "$checksum_verified"
       _log "verified images in $base_image_dir:"
-      printf '      generic (bios): %s\n' "$generic_img" >&2
-      printf '      uki (uefi):     %s\n' "$uki_img"     >&2
+      printf '      generic: %s\n' "$generic_img" >&2
+      printf '      uki:     %s\n' "$uki_img"     >&2
       return 0
     fi
 
     local image
-    case "$mode" in
-      bios)             image="$generic_img" ;;
-      uefi|uefi-secure) image="$uki_img" ;;
+    case "$image_variant" in
+      generic) image="$generic_img" ;;
+      uki)     image="$uki_img" ;;
     esac
     _fetch_and_verify_image "$image" "$checksum_verified"
 
     cmd_build
-    _log "booting [$mode]"
+    _log "booting $image_variant image [$mode]"
     cmd_boot "$base_image_dir/$image" "$mode"
   }
 
@@ -483,10 +491,14 @@ Usage:
   $self --config <file> run  [MODE|--download-only]   download + verify + build + boot
   $self help                                          this message
 
-MODE:
-  bios         Cloud Base Generic image (traditional hybrid)   [default]
-  uefi         Cloud Base UKI image (UEFI-only)
-  uefi-secure  Cloud Base UKI image + Secure Boot
+MODE (the VM firmware — independent of the image):
+  bios         legacy BIOS/SeaBIOS   [default]
+  uefi         UEFI
+  uefi-secure  UEFI + Secure Boot
+
+Image is chosen separately by IMAGE_VARIANT in the config:
+  generic  Cloud Base Generic, hybrid BIOS+UEFI — works with any MODE   [default]
+  uki      Cloud Base UKI, UEFI-only — MODE must be uefi/uefi-secure
 
 Configuration:
   All settings come from the --config KEY=VALUE file (required for build/boot/run;
@@ -494,10 +506,10 @@ Configuration:
   with --config. Unknown keys and malformed values are rejected.
 
 Examples:
-  $self --config fedora-cloud.conf run                 # fetch+verify+boot BIOS image
-  $self --config fedora-cloud.conf run uefi            # ... the UKI image under UEFI
-  $self --config fedora-cloud.conf run --download-only # fetch+verify BOTH, no boot
-  $self --config fedora-cloud.conf build
+  $self --config fedora-cloud.conf run                 # generic image, BIOS firmware
+  $self --config fedora-cloud.conf run uefi            # generic image, UEFI firmware
+  $self --config fedora-cloud.conf run --download-only # fetch+verify BOTH variants, no boot
+  $self --config fedora-cloud.conf build               # (IMAGE_VARIANT=uki -> UKI image)
 EOF
   }
 
@@ -524,6 +536,7 @@ EOF
     [LIBVIRT_URI]="qemu:///session"
     [NETWORK]="user"
     [OSINFO]="detect=on,require=off"
+    [IMAGE_VARIANT]="generic"
     [VER]="44"
     [ARCH]="x86_64"
     [FEDORA_GPG_URL]="https://fedoraproject.org/fedora.gpg"
@@ -570,6 +583,7 @@ EOF
   local osinfo="${cfg[OSINFO]}"
   local ovmf_code="${cfg[OVMF_CODE]:-}"
   local nvram_path="${cfg[NVRAM_PATH]:-}"
+  local image_variant="${cfg[IMAGE_VARIANT]}"
   local ver="${cfg[VER]}"
   local arch="${cfg[ARCH]}"
   local fedora_gpg_url="${cfg[FEDORA_GPG_URL]}"
