@@ -222,13 +222,19 @@ main() {
           boot="uefi"  # libvirt firmware autoselection
         fi ;;
       uefi-secure)
-        boot="uefi,firmware.feature0.name=secure-boot,firmware.feature0.enabled=yes" ;;
+        # enrolled-keys=yes selects a firmware whose varstore ships the distro/MS
+        # keys, so the signed shim/kernel actually validate under Secure Boot.
+        boot="uefi,firmware.feature0.name=secure-boot,firmware.feature0.enabled=yes,firmware.feature1.name=enrolled-keys,firmware.feature1.enabled=yes" ;;
       *) _die "unknown firmware mode '$mode' (use: bios|uefi|uefi-secure)" ;;
     esac
     # Custom per-VM UEFI varstore path; overrides autoselection's default
     # location while keeping template-based init. Empty -> libvirt's default.
     [[ -n "$nvram_path" ]] && boot+=",nvram=${nvram_path}"
     _ref=(--boot "$boot")
+    # OVMF Secure Boot needs SMM, and QEMU only supports SMM on the q35 machine.
+    # Without both, firmware autoselection can't match a secure-boot binary
+    # ("Unable to find 'efi' firmware compatible ...").
+    [[ "$mode" == "uefi-secure" ]] && _ref+=(--features smm.state=on --machine q35)
   }
 
   _undefine_domain() {  # tear down a prior domain of the same name, incl. UEFI nvram
