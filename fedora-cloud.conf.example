@@ -61,6 +61,9 @@ BASE_IMAGE_DIR=/var/lib/fedora-cloud/base
 #                                      # OS, so name= is the fallback (avoids the 'generic'
 #                                      # perf warning). Use an id your osinfo-db has:
 #                                      # `osinfo-query os | grep fedora`, or a generic linux2024.
+# TPM=no                               # yes = attach an emulated TPM 2.0 (needs swtpm on the
+#                                      # host). Makes systemd-tpm2-setup succeed + enables
+#                                      # measured boot; default no (that unit fails harmlessly).
 # OVMF_CODE=/usr/share/edk2/ovmf/OVMF_CODE.fd  # explicit UEFI firmware (optional)
 # NVRAM_PATH=/var/lib/fedora-cloud/web01_VARS.fd  # per-VM UEFI varstore path (uefi/uefi-secure
 #                                      # only; empty = libvirt's default nvram dir)

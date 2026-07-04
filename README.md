@@ -500,6 +500,13 @@ routable IP, switch to a system NAT setup — set `LIBVIRT_URI=qemu:///system` a
 - `AllowUsers` only permits the two provisioned users (`STD_USER`/`ADMIN_USER`); any other account is rejected. Check the sshd drop-in.
 - cloud-init may not have finished. On the console: `cloud-init status --long` should read `done`; check `/var/log/cloud-init-output.log`.
 
+**`systemd-tpm2-setup.service` failed in the guest.**
+Expected when the VM has no TPM (the default) — the unit that provisions the TPM2
+has nothing to talk to. It's **harmless** and unrelated to Secure Boot (which
+validates signatures, not TPM measurements). To make it succeed, set `TPM=yes`
+in the config (attaches an emulated TPM 2.0; needs `swtpm` on the host:
+`sudo dnf install swtpm swtpm-tools`) and rebuild.
+
 **UKI image fails on the very first boot.**
 Early UKI images were subject to a shim bug where the first boot can fail and need
 a reset. Force one boot cycle:

@@ -64,7 +64,7 @@ main() {
       TEMPLATE|KEYS_DIR|STD_KEY_FILE|ADM_KEY_FILE|TMUX_CONF|OVERLAY_IMAGE_DIR|\
       BASE_IMAGE_DIR|STD_USER|ADMIN_USER|GENERATE_KEYS|ENCRYPT_KEYS|SEED_METHOD|\
       CRYPTO_POLICY|INSTANCE_ID|VM_HOSTNAME|DOMAIN|RAM_MB|VCPUS|LIBVIRT_URI|NETWORK|OSINFO|\
-      OVMF_CODE|NVRAM_PATH|IMAGE_VARIANT|VER|ARCH|FEDORA_GPG_URL|CHECKSUM_URL|COMPOSE) return 0 ;;
+      OVMF_CODE|NVRAM_PATH|TPM|IMAGE_VARIANT|VER|ARCH|FEDORA_GPG_URL|CHECKSUM_URL|COMPOSE) return 0 ;;
       *) return 1 ;;
     esac
   }
@@ -87,7 +87,7 @@ main() {
         [[ "$val" =~ ^[a-z]+(\+[a-z]+)?:// ]] || _die "$where must be a libvirt URI (e.g. qemu:///session)" ;;
       DOMAIN|INSTANCE_ID|VM_HOSTNAME)
         [[ "$val" =~ ^[A-Za-z0-9._-]+$ ]] || _die "$where may contain only [A-Za-z0-9._-], got '$val'" ;;
-      GENERATE_KEYS|ENCRYPT_KEYS)
+      GENERATE_KEYS|ENCRYPT_KEYS|TPM)
         [[ "$val" =~ ^(yes|no)$ ]] || _die "$where must be 'yes' or 'no', got '$val'" ;;
       SEED_METHOD)
         [[ "$val" =~ ^(seed-iso|cloud-init)$ ]] || _die "$where must be 'seed-iso' or 'cloud-init', got '$val'" ;;
@@ -245,12 +245,16 @@ main() {
     esac
   }
 
-  _undefine_domain() {  # tear down a prior domain of the same name, incl. UEFI nvram
+  _undefine_domain() {  # tear down a prior domain of the same name, incl. UEFI nvram + TPM
     local dom="$1"
     if virsh --connect "$libvirt_uri" dominfo "$dom" >/dev/null 2>&1; then
       _log "removing existing domain '$dom'"
-      virsh --connect "$libvirt_uri" destroy  "$dom"          >/dev/null 2>&1 || true
-      virsh --connect "$libvirt_uri" undefine "$dom" --nvram  >/dev/null 2>&1 || true
+      virsh --connect "$libvirt_uri" destroy "$dom" >/dev/null 2>&1 || true
+      # --tpm removes the emulated TPM state too (libvirt >= 7.x); fall back
+      # without it on older libvirt.
+      virsh --connect "$libvirt_uri" undefine "$dom" --nvram --tpm >/dev/null 2>&1 \
+        || virsh --connect "$libvirt_uri" undefine "$dom" --nvram >/dev/null 2>&1 \
+        || true
     fi
   }
 
@@ -412,6 +416,14 @@ main() {
     local -a boot_args
     _firmware_args "$mode" boot_args
 
+    # Optional emulated TPM 2.0 (needs swtpm on the host). Makes
+    # systemd-tpm2-setup succeed and enables measured boot.
+    local -a tpm_args=()
+    if [[ "$tpm" == "yes" ]]; then
+      _need swtpm
+      tpm_args=(--tpm "backend.type=emulator,backend.version=2.0")
+    fi
+
     _undefine_domain "$domain"
 
     mkdir -p "$overlay_image_dir"
@@ -436,6 +448,7 @@ main() {
       --graphics none \
       --noautoconsole \
       "${seed_args[@]}" \
+      "${tpm_args[@]}" \
       "${boot_args[@]}"
 
     _print_connect_help
@@ -556,6 +569,7 @@ EOF
     [LIBVIRT_URI]="qemu:///session"
     [NETWORK]="user"
     [OSINFO]="detect=on,require=off,name=fedora43"
+    [TPM]="no"
     [IMAGE_VARIANT]="generic"
     [VER]="44"
     [ARCH]="x86_64"
@@ -602,6 +616,7 @@ EOF
   local libvirt_uri="${cfg[LIBVIRT_URI]}"
   local network="${cfg[NETWORK]}"
   local osinfo="${cfg[OSINFO]}"
+  local tpm="${cfg[TPM]}"
   local ovmf_code="${cfg[OVMF_CODE]:-}"
   local nvram_path="${cfg[NVRAM_PATH]:-}"
   local image_variant="${cfg[IMAGE_VARIANT]}"
