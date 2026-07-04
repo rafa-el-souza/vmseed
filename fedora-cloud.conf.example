@@ -52,7 +52,11 @@ BASE_IMAGE_DIR=/var/lib/fedora-cloud/base
 #                                      #   user            session-safe, no routable IP (default)
 #                                      #   bridge=virbr0   session + bridge for a real IP (see README)
 #                                      #   network=default only with a system URI: qemu:///system
-# OSINFO=detect=on,require=off         # virt-install --osinfo value
+#                                      # A virtio NIC is pinned unless you add ,model=... yourself.
+# OSINFO=detect=on,require=off,name=fedora43  # virt-install --osinfo. --import can't detect the
+#                                      # OS, so name= is the fallback (avoids the 'generic'
+#                                      # perf warning). Use an id your osinfo-db has:
+#                                      # `osinfo-query os | grep fedora`, or a generic linux2024.
 # OVMF_CODE=/usr/share/edk2/ovmf/OVMF_CODE.fd  # explicit UEFI firmware (optional)
 # NVRAM_PATH=/var/lib/fedora-cloud/web01_VARS.fd  # per-VM UEFI varstore path (uefi/uefi-secure
 #                                      # only; empty = libvirt's default nvram dir)

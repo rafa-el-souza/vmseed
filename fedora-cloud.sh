@@ -413,6 +413,11 @@ main() {
     local overlay="$overlay_image_dir/${domain}.qcow2"
     _make_overlay "$image" "$overlay" "$fresh"
 
+    # Pin a virtio NIC unless the config already chose a model (so a generic
+    # osinfo can't downgrade networking to an emulated e1000/rtl8139).
+    local net_arg="$network"
+    [[ "$net_arg" == *model=* ]] || net_arg+=",model=virtio"
+
     _log "starting '$domain' [$mode] via $libvirt_uri"
     virt-install \
       --connect "$libvirt_uri" \
@@ -421,8 +426,8 @@ main() {
       --vcpus "$vcpus" \
       --osinfo "$osinfo" \
       --import \
-      --disk "path=$overlay,format=qcow2,bus=virtio" \
-      --network "$network" \
+      --disk "path=$overlay,format=qcow2,bus=virtio,cache=none,discard=unmap" \
+      --network "$net_arg" \
       --graphics none \
       --noautoconsole \
       "${seed_args[@]}" \
@@ -544,7 +549,7 @@ EOF
     [VCPUS]="2"
     [LIBVIRT_URI]="qemu:///session"
     [NETWORK]="user"
-    [OSINFO]="detect=on,require=off"
+    [OSINFO]="detect=on,require=off,name=fedora43"
     [IMAGE_VARIANT]="generic"
     [VER]="44"
     [ARCH]="x86_64"
