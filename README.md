@@ -148,13 +148,17 @@ Generated artifacts live **outside** the repo, in directories you configure
 (no defaults — see [Configuration](#configuration)):
 
 ```
-$OVERLAY_IMAGE_DIR/<DOMAIN>.qcow2     # the qcow2 overlay (base image stays pristine)
-$OVERLAY_IMAGE_DIR/build/user-data    # rendered cloud-config
-$OVERLAY_IMAGE_DIR/build/meta-data
-$OVERLAY_IMAGE_DIR/build/seed.iso     # with SEED_METHOD=seed-iso (the default)
-$BASE_IMAGE_DIR/Fedora-Cloud-…qcow2   # downloaded base image(s)
+$OVERLAY_IMAGE_DIR/<DOMAIN>.qcow2            # the qcow2 overlay (base image stays pristine)
+$OVERLAY_IMAGE_DIR/build/<DOMAIN>/user-data  # rendered cloud-config (per-DOMAIN)
+$OVERLAY_IMAGE_DIR/build/<DOMAIN>/meta-data
+$OVERLAY_IMAGE_DIR/build/<DOMAIN>/seed.iso   # with SEED_METHOD=seed-iso (the default)
+$BASE_IMAGE_DIR/Fedora-Cloud-…qcow2          # downloaded base image(s)
 $BASE_IMAGE_DIR/{fedora.gpg,CHECKSUM,CHECKSUM.verified}
 ```
+
+Both the overlay and its seed are keyed by `DOMAIN`, so multiple guests can share
+one `OVERLAY_IMAGE_DIR` without clobbering each other — see
+[Running multiple guests](#running-multiple-guests).
 
 SSH keys live in `KEYS_DIR` (default `~/.ssh`), also outside the repo — see
 [SSH keys](#ssh-keys).
@@ -164,7 +168,7 @@ require a `--config <file>` (see [Configuration](#configuration)):
 
 | Command | Does |
 |---------|------|
-| `fedora-cloud.sh --config <f> build` | render the seed into `$OVERLAY_IMAGE_DIR/build/` (+ `seed.iso` unless `SEED_METHOD=cloud-init`) |
+| `fedora-cloud.sh --config <f> build` | render the seed into `$OVERLAY_IMAGE_DIR/build/<DOMAIN>/` (+ `seed.iso` unless `SEED_METHOD=cloud-init`) |
 | `fedora-cloud.sh --config <f> boot [--fresh] <image> [MODE]` | boot an existing image under libvirt |
 | `fedora-cloud.sh --config <f> run [MODE\|--download-only]` | download + verify + build + boot, end-to-end |
 
@@ -199,6 +203,30 @@ expansion) — use an absolute path. Other common keys: `STD_USER` / `ADMIN_USER
 `CHECKSUM_URL` (to pin a download).
 
 Your personal `fedora-cloud.conf` is git-ignored; only the `.example` is tracked.
+
+## Running multiple guests
+
+The base and overlay directories play different roles when you run more than one
+VM:
+
+- **`BASE_IMAGE_DIR` is meant to be shared.** Base images are pristine and
+  read-only; every guest boots from its own copy-on-write overlay that *backs
+  onto* the shared base. Pointing several guests at one base dir means the image
+  is downloaded and verified once, then reused. Two caveats: the base becomes a
+  permanent backing dependency (moving or deleting it breaks every overlay built
+  on it), and there is no download lock — so seed the image **once** up front
+  with `run --download-only` before launching guests in parallel, rather than
+  racing two first-time downloads into the same file.
+- **`OVERLAY_IMAGE_DIR` can be shared too, but each guest needs its own
+  `DOMAIN`.** Both the overlay (`<DOMAIN>.qcow2`) and its seed
+  (`build/<DOMAIN>/…`) are keyed by `DOMAIN`, so distinct domains never collide.
+  Reusing the *same* `DOMAIN` for two guests would overwrite one's overlay and
+  seed and let `virsh undefine` tear down the sibling — so also vary
+  `VM_HOSTNAME`, `INSTANCE_ID`, and the key files per guest.
+
+In short: one config per guest, sharing `BASE_IMAGE_DIR`, each with its own
+`DOMAIN` (and ideally its own `OVERLAY_IMAGE_DIR` if you like them fully
+separated).
 
 ## Seed delivery
 

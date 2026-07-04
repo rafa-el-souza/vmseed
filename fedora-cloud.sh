@@ -369,8 +369,9 @@ main() {
     # template) so multi-line content can't break YAML indentation.
     tmux_b64="$(base64 -w0 < "$tmux_conf")"
 
-    # Seed artifacts live in the build/ subdir of the overlay image dir.
-    local seed_dir="$overlay_image_dir/build"
+    # Seed artifacts live in a per-domain build/ subdir so several guests can
+    # share one OVERLAY_IMAGE_DIR without clobbering each other's cloud-config.
+    local seed_dir="$overlay_image_dir/build/$domain"
     mkdir -p "$seed_dir"
     _render_user_data "$std_key" "$adm_key" "$tmux_b64" "$std_user" "$admin_user" "$crypto_policy" > "$seed_dir/user-data"
     printf 'instance-id: %s\nlocal-hostname: %s\n' "$instance_id" "$vm_hostname" > "$seed_dir/meta-data"
@@ -395,7 +396,8 @@ main() {
     local mode="${2:-bios}"
 
     _need virt-install virsh qemu-img
-    local seed_dir="$overlay_image_dir/build"
+    # Per-domain seed dir (matches cmd_build) so a shared OVERLAY_IMAGE_DIR is safe.
+    local seed_dir="$overlay_image_dir/build/$domain"
     # How the seed reaches the guest depends on SEED_METHOD:
     #   seed-iso    -> attach the cidata ISO built by `build` as a CDROM
     #   cloud-init  -> let virt-install build+attach its own seed from the files

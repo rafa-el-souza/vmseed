@@ -13,11 +13,12 @@
 #   BASE_IMAGE_DIR     required for run (the image download target)
 
 # --- REQUIRED: image directories (no defaults) ---
-# Overlay + seed live here:
-#   <OVERLAY_IMAGE_DIR>/<DOMAIN>.qcow2         the qcow2 overlay
-#   <OVERLAY_IMAGE_DIR>/build/user-data        rendered cloud-config
-#   <OVERLAY_IMAGE_DIR>/build/meta-data
-#   <OVERLAY_IMAGE_DIR>/build/seed.iso         (only if cloud-localds is installed)
+# Overlay + seed live here (the seed dir is per-DOMAIN, so several guests can
+# safely share one OVERLAY_IMAGE_DIR — give each a distinct DOMAIN):
+#   <OVERLAY_IMAGE_DIR>/<DOMAIN>.qcow2              the qcow2 overlay
+#   <OVERLAY_IMAGE_DIR>/build/<DOMAIN>/user-data    rendered cloud-config
+#   <OVERLAY_IMAGE_DIR>/build/<DOMAIN>/meta-data
+#   <OVERLAY_IMAGE_DIR>/build/<DOMAIN>/seed.iso     (only if cloud-localds is installed)
 OVERLAY_IMAGE_DIR=/var/lib/fedora-cloud/overlays
 # Downloaded base images + CHECKSUM + keyring live here (flat, no structure):
 BASE_IMAGE_DIR=/var/lib/fedora-cloud/base
