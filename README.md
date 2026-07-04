@@ -79,16 +79,28 @@ instead of locking you out.
 
 ## Layout
 
+The repo itself only holds the tool and its inputs:
+
 ```
 fedora-cloud.sh          # single entry point: build | boot | run | help
 fedora-cloud.conf.example # sample config — copy to fedora-cloud.conf and edit
 user-data.yaml           # cloud-config TEMPLATE (PLACEHOLDER_* tokens)
 dotfiles/tmux.conf       # standard user's tmux config, injected into ~/.tmux.conf
-build/                   # generated: user-data, meta-data, seed.iso, overlay (git-ignored)
-images/                  # downloaded qcow2 + CHECKSUM + fedora.gpg (git-ignored)
 ```
 
-SSH keys live in `KEYS_DIR` (default `~/.ssh`), outside the repo — see
+Generated artifacts live **outside** the repo, in directories you configure
+(no defaults — see [Configuration](#configuration)):
+
+```
+$OVERLAY_IMAGE_DIR/<DOMAIN>.qcow2     # the qcow2 overlay (base image stays pristine)
+$OVERLAY_IMAGE_DIR/build/user-data    # rendered cloud-config
+$OVERLAY_IMAGE_DIR/build/meta-data
+$OVERLAY_IMAGE_DIR/build/seed.iso     # only if cloud-localds is installed
+$BASE_IMAGE_DIR/Fedora-Cloud-…qcow2   # downloaded base image(s)
+$BASE_IMAGE_DIR/{fedora.gpg,CHECKSUM,CHECKSUM.verified}
+```
+
+SSH keys live in `KEYS_DIR` (default `~/.ssh`), also outside the repo — see
 [SSH keys](#ssh-keys).
 
 Everything is one script, `fedora-cloud.sh`, with three subcommands. All of them
@@ -96,7 +108,7 @@ require a `--config <file>` (see [Configuration](#configuration)):
 
 | Command | Does |
 |---------|------|
-| `fedora-cloud.sh --config <f> build` | render the SSH keys into `build/user-data` (+ optional `seed.iso`) |
+| `fedora-cloud.sh --config <f> build` | render the seed into `$OVERLAY_IMAGE_DIR/build/` (+ optional `seed.iso`) |
 | `fedora-cloud.sh --config <f> boot [--fresh] <image> [MODE]` | boot an existing image under libvirt |
 | `fedora-cloud.sh --config <f> run [MODE\|--download-only]` | download + verify + build + boot, end-to-end |
 
@@ -114,11 +126,18 @@ $EDITOR fedora-cloud.conf
 
 The file is **parsed, never sourced** (so a config file cannot execute code), and
 every value is **strictly validated** — unknown keys, malformed lines, and
-out-of-range values are rejected with a `config:<line>` error. Any key you omit
-keeps its built-in default. Recognised keys are documented in the sample; the
-common ones: `STD_USER` / `ADMIN_USER` (the two usernames), `DOMAIN`, `RAM_MB`,
-`VCPUS`, `LIBVIRT_URI`, `VER`, `ARCH`, `OVMF_CODE`, and `COMPOSE` /
-`CHECKSUM_URL` (to pin a download).
+out-of-range values are rejected with a `config:<line>` error. Most keys have a
+built-in default; the two directory keys do **not** and must be set:
+
+| Key | Required for | Holds |
+|-----|--------------|-------|
+| `OVERLAY_IMAGE_DIR` | `build`, `boot`, `run` | the qcow2 overlay + the `build/` seed subdir |
+| `BASE_IMAGE_DIR` | `run` | downloaded base images, CHECKSUM, keyring |
+
+Both are auto-created if missing. **Paths are literal** (no `~`/variable
+expansion) — use an absolute path. Other common keys: `STD_USER` / `ADMIN_USER`
+(the two usernames), `DOMAIN`, `RAM_MB`, `VCPUS`, `LIBVIRT_URI`, `VER`, `ARCH`,
+`OVMF_CODE`, and `COMPOSE` / `CHECKSUM_URL` (to pin a download).
 
 Your personal `fedora-cloud.conf` is git-ignored; only the `.example` is tracked.
 
@@ -293,8 +312,9 @@ attestation.
    ./fedora-cloud.sh --config fedora-cloud.conf build
    ```
 
-   This renders `build/user-data`, validates it with `cloud-init schema`, and
-   (if `cloud-localds` is installed) produces `build/seed.iso`.
+   This renders `$OVERLAY_IMAGE_DIR/build/user-data`, validates it with
+   `cloud-init schema`, and (if `cloud-localds` is installed) produces
+   `$OVERLAY_IMAGE_DIR/build/seed.iso`.
 
    > Install the tooling on Fedora with:
    > `sudo dnf install cloud-utils virt-install libvirt qemu-img edk2-ovmf`
@@ -309,16 +329,16 @@ attestation.
    ./fedora-cloud.sh --config fedora-cloud.conf boot Fedora-Cloud-Base-UKI.qcow2 uefi-secure # UKI + Secure Boot
    ```
 
-   `boot` feeds `build/user-data` + `build/meta-data` to `virt-install
+   `boot` feeds `$OVERLAY_IMAGE_DIR/build/{user-data,meta-data}` to `virt-install
    --cloud-init` (which builds and attaches the NoCloud seed itself), boots from
    a qcow2 **overlay** so the base image stays pristine, and lets libvirt's
    firmware autoselection pick OVMF for the UEFI modes. Re-run with `--fresh` to
    reset the disk.
 
-   For cloud providers, pass `build/user-data` to the platform's user-data field
-   instead (e.g. `openstack server create --user-data build/user-data`, EC2 user
-   data, ...). The `build/seed.iso` from `build` is only needed for manual
-   qemu/`cloud-localds` workflows.
+   For cloud providers, pass `$OVERLAY_IMAGE_DIR/build/user-data` to the
+   platform's user-data field instead (e.g. `openstack server create --user-data
+   …/build/user-data`, EC2 user data, ...). The `build/seed.iso` is only needed
+   for manual qemu/`cloud-localds` workflows.
 
 4. Connect. With the default **`qemu:///session` + `NETWORK=user`**, the guest is
    NAT'd behind user-mode networking, so `domifaddr` won't show a routable lease —
@@ -372,12 +392,12 @@ CHECKSUM_URL=https://download.fedoraproject.org/pub/fedora/linux/releases/44/Clo
 Find the current compose id on the [Fedora Cloud download page](https://fedoraproject.org/cloud/download/).
 
 **`gpgv: Can't check signature: No public key`.**
-The wrong or a stale keyring. Delete `images/fedora.gpg` so `run` refetches it,
-or point `FEDORA_GPG_URL=` at the correct keyring. Never skip this step — an
-unverified image is the whole thing this project guards against.
+The wrong or a stale keyring. Delete `$BASE_IMAGE_DIR/fedora.gpg` so `run`
+refetches it, or point `FEDORA_GPG_URL=` at the correct keyring. Never skip this
+step — an unverified image is the whole thing this project guards against.
 
 **`sha256sum -c` reports FAILED.**
-A truncated or tampered download. Delete the file from `images/` and re-run; if it
+A truncated or tampered download. Delete the file from `$BASE_IMAGE_DIR` and re-run; if it
 fails again from a different mirror, do not boot it.
 
 **`virsh domifaddr` shows no address (or `N/A`).**
@@ -417,7 +437,7 @@ and relax it: `sudo update-crypto-policies --set DEFAULT:NO-SHA1 && sudo systemc
 or edit the `runcmd` in `user-data.yaml` before the next build.
 
 **Re-running `boot` uses the old disk state.**
-The qcow2 overlay in `build/` persists between runs. Reset it with
+The qcow2 overlay in `$OVERLAY_IMAGE_DIR` persists between runs. Reset it with
 `./fedora-cloud.sh --config <f> boot --fresh <image> <mode>`, which recreates the
 overlay from the pristine base — cloud-init only re-applies on a fresh instance.
 

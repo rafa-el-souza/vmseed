@@ -2,9 +2,23 @@
 # Copy to fedora-cloud.conf and edit. Pass with: fedora-cloud.sh --config fedora-cloud.conf <cmd>
 #
 # '#' comments and blank lines are ignored. Surrounding whitespace is trimmed.
-# Unknown keys or malformed values are rejected. Any key you omit keeps the
-# built-in default shown below. Paths are LITERAL: '~' is NOT expanded — use an
-# absolute path if you override a *_DIR / *_FILE (the KEYS_DIR default is $HOME/.ssh).
+# Unknown keys or malformed values are rejected. Paths are LITERAL: '~' is NOT
+# expanded — use an absolute path for any *_DIR / *_FILE.
+#
+# Most keys are optional (a commented default is shown). OVERLAY_IMAGE_DIR and
+# BASE_IMAGE_DIR have NO default and MUST be set (uncommented below):
+#   OVERLAY_IMAGE_DIR  required for build / boot / run
+#   BASE_IMAGE_DIR     required for run (the image download target)
+
+# --- REQUIRED: image directories (no defaults) ---
+# Overlay + seed live here:
+#   <OVERLAY_IMAGE_DIR>/<DOMAIN>.qcow2         the qcow2 overlay
+#   <OVERLAY_IMAGE_DIR>/build/user-data        rendered cloud-config
+#   <OVERLAY_IMAGE_DIR>/build/meta-data
+#   <OVERLAY_IMAGE_DIR>/build/seed.iso         (only if cloud-localds is installed)
+OVERLAY_IMAGE_DIR=/var/lib/fedora-cloud/overlays
+# Downloaded base images + CHECKSUM + keyring live here (flat, no structure):
+BASE_IMAGE_DIR=/var/lib/fedora-cloud/base
 
 # --- seed / paths ---
 # TEMPLATE=./user-data.yaml            # cloud-config template
@@ -20,8 +34,6 @@
 #                                      # no = fail (you must provide the key yourself)
 # ENCRYPT_KEYS=yes                     # auto-generated keys: yes = passphrase prompt
 #                                      # (interactive); no = -N '' (non-interactive)
-# BUILD_DIR=./build                    # generated seed + overlay
-# IMAGES_DIR=./images                  # downloaded images + CHECKSUM + keyring
 # INSTANCE_ID=fedora-01                # cloud-init instance-id  [A-Za-z0-9._-]
 # VM_HOSTNAME=fedora-01                # guest hostname          [A-Za-z0-9._-]
 

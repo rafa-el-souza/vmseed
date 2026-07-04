@@ -1,13 +1,8 @@
 # Personal config (keep the .example tracked)
 /fedora-cloud.conf
 
-# Generated artifacts
-/build/
-
-# Downloaded images, checksums and keyring
-/images/
-
-# Never commit key material or images (SSH keys live in ~/.ssh, outside the repo)
+# OVERLAY_IMAGE_DIR and BASE_IMAGE_DIR are configured (no default) and expected
+# outside the repo. Never commit key material or images regardless of location.
 *.pem
 *.qcow2
 *.img

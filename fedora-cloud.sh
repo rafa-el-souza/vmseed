@@ -48,13 +48,23 @@ main() {
     [[ -n "$config_file" ]] || _die "'--config <file>' is required for the '$1' command"
   }
 
+  _require_overlay_dir() {  # OVERLAY_IMAGE_DIR has no default — must be configured
+    [[ -n "$overlay_image_dir" ]] \
+      || _die "OVERLAY_IMAGE_DIR is required in the config for the '$1' command"
+  }
+
+  _require_base_dir() {  # BASE_IMAGE_DIR has no default — needed for downloads
+    [[ -n "$base_image_dir" ]] \
+      || _die "BASE_IMAGE_DIR is required in the config for the 'run' command"
+  }
+
   # ---- config: known keys, per-key validation, strict KEY=VALUE parser ----
   _is_known_key() {
     case "$1" in
-      TEMPLATE|KEYS_DIR|STD_KEY_FILE|ADM_KEY_FILE|TMUX_CONF|BUILD_DIR|IMAGES_DIR|\
-      STD_USER|ADMIN_USER|GENERATE_KEYS|ENCRYPT_KEYS|INSTANCE_ID|VM_HOSTNAME|DOMAIN|\
-      RAM_MB|VCPUS|LIBVIRT_URI|NETWORK|OSINFO|OVMF_CODE|VER|ARCH|FEDORA_GPG_URL|\
-      CHECKSUM_URL|COMPOSE) return 0 ;;
+      TEMPLATE|KEYS_DIR|STD_KEY_FILE|ADM_KEY_FILE|TMUX_CONF|OVERLAY_IMAGE_DIR|\
+      BASE_IMAGE_DIR|STD_USER|ADMIN_USER|GENERATE_KEYS|ENCRYPT_KEYS|INSTANCE_ID|\
+      VM_HOSTNAME|DOMAIN|RAM_MB|VCPUS|LIBVIRT_URI|NETWORK|OSINFO|OVMF_CODE|VER|ARCH|\
+      FEDORA_GPG_URL|CHECKSUM_URL|COMPOSE) return 0 ;;
       *) return 1 ;;
     esac
   }
@@ -93,7 +103,7 @@ main() {
         [[ "$val" =~ ^[A-Za-z0-9=,._:-]+$ ]] || _die "$where has invalid characters: '$val'" ;;
       NETWORK)
         [[ "$val" =~ ^[A-Za-z0-9=,._:/-]+$ ]] || _die "$where has invalid characters: '$val'" ;;
-      TEMPLATE|KEYS_DIR|STD_KEY_FILE|ADM_KEY_FILE|TMUX_CONF|BUILD_DIR|IMAGES_DIR|OVMF_CODE)
+      TEMPLATE|KEYS_DIR|STD_KEY_FILE|ADM_KEY_FILE|TMUX_CONF|OVERLAY_IMAGE_DIR|BASE_IMAGE_DIR|OVMF_CODE)
         [[ "$val" != *[[:space:]]* ]] || _die "$where (a path) must not contain whitespace" ;;
     esac
   }
@@ -291,7 +301,7 @@ main() {
   _fetch_and_verify_image() {  # download (if absent) then check SHA-256 against verified CHECKSUM
     local img="$1" checksum_file="$2"
     [[ -n "$img" ]] || _die "image name not found in CHECKSUM"
-    local dest="$images_dir/$img"
+    local dest="$base_image_dir/$img"
     if [[ ! -s "$dest" ]]; then
       _log "downloading $img"
       curl -fL --progress-bar "$base_url/$img" -o "$dest"
@@ -300,7 +310,7 @@ main() {
     fi
     _log "verifying SHA-256 of $img"
     local line
-    line="$( cd "$images_dir" \
+    line="$( cd "$base_image_dir" \
       && sha256sum -c --ignore-missing "$(basename "$checksum_file")" 2>/dev/null \
       | grep -E "^${img}:" || true )"
     [[ "$line" == "${img}: OK" ]] || _die "checksum verification FAILED for $img"
@@ -310,6 +320,7 @@ main() {
   # ===================== PUBLIC API (commands) =====================
   cmd_build() {
     _require_config build
+    _require_overlay_dir build
     _need awk base64
     [[ "$std_user" != "$admin_user" ]] \
       || _die "STD_USER and ADMIN_USER must differ (both '$std_user')"
@@ -331,17 +342,20 @@ main() {
     # template) so multi-line content can't break YAML indentation.
     tmux_b64="$(base64 -w0 < "$tmux_conf")"
 
-    mkdir -p "$build_dir"
-    _render_user_data "$std_key" "$adm_key" "$tmux_b64" "$std_user" "$admin_user" > "$build_dir/user-data"
-    printf 'instance-id: %s\nlocal-hostname: %s\n' "$instance_id" "$vm_hostname" > "$build_dir/meta-data"
+    # Seed artifacts live in the build/ subdir of the overlay image dir.
+    local seed_dir="$overlay_image_dir/build"
+    mkdir -p "$seed_dir"
+    _render_user_data "$std_key" "$adm_key" "$tmux_b64" "$std_user" "$admin_user" > "$seed_dir/user-data"
+    printf 'instance-id: %s\nlocal-hostname: %s\n' "$instance_id" "$vm_hostname" > "$seed_dir/meta-data"
 
-    _validate_seed "$build_dir/user-data"
-    _build_seed_iso "$build_dir"
-    _log "seed ready: $build_dir/user-data"
+    _validate_seed "$seed_dir/user-data"
+    _build_seed_iso "$seed_dir"
+    _log "seed ready: $seed_dir/user-data"
   }
 
   cmd_boot() {
     _require_config boot
+    _require_overlay_dir boot
     local fresh=0
     if [[ "${1:-}" == "--fresh" ]]; then fresh=1; shift; fi
     local image="${1:-}"
@@ -349,8 +363,8 @@ main() {
     local mode="${2:-bios}"
 
     _need virt-install virsh qemu-img
-    local f
-    for f in "$build_dir/user-data" "$build_dir/meta-data"; do
+    local seed_dir="$overlay_image_dir/build" f
+    for f in "$seed_dir/user-data" "$seed_dir/meta-data"; do
       [[ -f "$f" ]] || _die "$f not found — run '$self --config <file> build' first"
     done
     [[ -f "$image" ]] || _die "image not found: $image"
@@ -360,7 +374,8 @@ main() {
 
     _undefine_domain "$domain"
 
-    local overlay="$build_dir/${domain}.qcow2"
+    mkdir -p "$overlay_image_dir"
+    local overlay="$overlay_image_dir/${domain}.qcow2"
     _make_overlay "$image" "$overlay" "$fresh"
 
     _log "starting '$domain' [$mode] via $libvirt_uri"
@@ -372,7 +387,7 @@ main() {
       --osinfo "$osinfo" \
       --import \
       --disk "path=$overlay,format=qcow2,bus=virtio" \
-      --cloud-init "user-data=$build_dir/user-data,meta-data=$build_dir/meta-data" \
+      --cloud-init "user-data=$seed_dir/user-data,meta-data=$seed_dir/meta-data" \
       --network "$network" \
       --graphics none \
       --noautoconsole \
@@ -383,6 +398,7 @@ main() {
 
   cmd_run() {
     _require_config run
+    _require_base_dir
     local mode="${1:-bios}" download_only=0
     case "$mode" in
       --download-only)        download_only=1 ;;
@@ -391,18 +407,18 @@ main() {
     esac
 
     _need curl gpgv sha256sum
-    mkdir -p "$images_dir"
+    mkdir -p "$base_image_dir"
 
-    local keyring="$images_dir/fedora.gpg"
+    local keyring="$base_image_dir/fedora.gpg"
     _fetch_keyring "$keyring"
 
-    local checksum_url_resolved checksum_raw="$images_dir/CHECKSUM"
+    local checksum_url_resolved checksum_raw="$base_image_dir/CHECKSUM"
     checksum_url_resolved="$(_resolve_checksum_url)"
     _log "fetching CHECKSUM: $checksum_url_resolved"
     curl -fsSL "$checksum_url_resolved" -o "$checksum_raw"
 
     # Verify signature AND strip to plaintext in one step; fails on a bad sig.
-    local checksum_verified="$images_dir/CHECKSUM.verified"
+    local checksum_verified="$base_image_dir/CHECKSUM.verified"
     _log "verifying CHECKSUM signature against Fedora keyring"
     gpgv --keyring "$keyring" --output "$checksum_verified" "$checksum_raw"
     _log "signature OK"
@@ -415,7 +431,7 @@ main() {
     if [[ "$download_only" == "1" ]]; then
       _fetch_and_verify_image "$generic_img" "$checksum_verified"
       _fetch_and_verify_image "$uki_img"     "$checksum_verified"
-      _log "verified images in $images_dir:"
+      _log "verified images in $base_image_dir:"
       printf '      generic (bios): %s\n' "$generic_img" >&2
       printf '      uki (uefi):     %s\n' "$uki_img"     >&2
       return 0
@@ -430,7 +446,7 @@ main() {
 
     cmd_build
     _log "booting [$mode]"
-    cmd_boot "$images_dir/$image" "$mode"
+    cmd_boot "$base_image_dir/$image" "$mode"
   }
 
   cmd_help() {
@@ -465,12 +481,12 @@ EOF
   # Built-in defaults; every one is overridable via the --config file. Only
   # file-provided values are validated (defaults are trusted). STD_KEY_FILE /
   # ADM_KEY_FILE default to files under KEYS_DIR and are derived after loading.
+  # OVERLAY_IMAGE_DIR and BASE_IMAGE_DIR have NO default — they must be set in
+  # the config (OVERLAY_IMAGE_DIR for build/boot/run, BASE_IMAGE_DIR for run).
   local -A cfg=(
     [TEMPLATE]="$script_dir/user-data.yaml"
     [TMUX_CONF]="$script_dir/dotfiles/tmux.conf"
     [KEYS_DIR]="$HOME/.ssh"
-    [BUILD_DIR]="$script_dir/build"
-    [IMAGES_DIR]="$script_dir/images"
     [STD_USER]="appuser"
     [ADMIN_USER]="admin"
     [GENERATE_KEYS]="yes"
@@ -515,8 +531,9 @@ EOF
   local encrypt_keys="${cfg[ENCRYPT_KEYS]}"
   local std_key_file="${cfg[STD_KEY_FILE]}"
   local adm_key_file="${cfg[ADM_KEY_FILE]}"
-  local build_dir="${cfg[BUILD_DIR]}"
-  local images_dir="${cfg[IMAGES_DIR]}"
+  # Required (no default); presence is enforced per-command by _require_* below.
+  local overlay_image_dir="${cfg[OVERLAY_IMAGE_DIR]:-}"
+  local base_image_dir="${cfg[BASE_IMAGE_DIR]:-}"
   local instance_id="${cfg[INSTANCE_ID]}"
   local vm_hostname="${cfg[VM_HOSTNAME]}"
   local domain="${cfg[DOMAIN]}"
