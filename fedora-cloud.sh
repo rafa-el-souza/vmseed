@@ -182,15 +182,22 @@ main() {
     printf '\n' >&2
     _log "booted. Reach the guest on the serial console:"
     printf '      virsh --connect %s console %s   (Ctrl+] to exit)\n' "$libvirt_uri" "$domain" >&2
-    if [[ "$network" == network=* ]]; then
-      # A libvirt-managed NAT network (system URI) yields a queryable lease.
-      _log "or find its IP and SSH in:"
-      printf '      virsh --connect %s domifaddr %s\n' "$libvirt_uri" "$domain" >&2
-      printf '      ssh -i keys/admin admin@<IP>   /   ssh -i keys/appuser appuser@<IP>\n' >&2
-    else
-      # User-mode networking (session default): no queryable lease.
-      _note "NETWORK=$network gives no queryable lease; use the console, or a system URI + NETWORK=network=default for direct SSH"
-    fi
+    case "$network" in
+      network=*)
+        # A libvirt-managed NAT network yields a queryable lease via domifaddr.
+        _log "or find its IP and SSH in:"
+        printf '      virsh --connect %s domifaddr %s\n' "$libvirt_uri" "$domain" >&2
+        printf '      ssh -i keys/admin admin@<IP>   /   ssh -i keys/appuser appuser@<IP>\n' >&2 ;;
+      bridge=*)
+        # Bridged: lease is served by whoever owns the bridge (e.g. virbr0's dnsmasq).
+        _log "or find its IP on the bridge and SSH in:"
+        printf '      virsh -c qemu:///system net-dhcp-leases default   # if bridged to virbr0\n' >&2
+        printf '      ip neigh show dev %s\n' "${network#bridge=}" >&2
+        printf '      ssh -i keys/admin admin@<IP>   /   ssh -i keys/appuser appuser@<IP>\n' >&2 ;;
+      *)
+        # User-mode networking (session default): no queryable lease.
+        _note "NETWORK=$network gives no queryable lease; use the console, or a bridge/system NAT for direct SSH" ;;
+    esac
   }
 
   # ---- download / verification helpers ----

@@ -20,8 +20,10 @@
 # RAM_MB=2048                          # memory, positive integer
 # VCPUS=2                              # vCPUs, positive integer
 # LIBVIRT_URI=qemu:///session          # libvirt connection URI (unprivileged user session)
-# NETWORK=user                         # virt-install --network (session-safe user networking;
-#                                      # use 'network=default' only with a system URI: qemu:///system)
+# NETWORK=user                         # virt-install --network. Options:
+#                                      #   user            session-safe, no routable IP (default)
+#                                      #   bridge=virbr0   session + bridge for a real IP (see README)
+#                                      #   network=default only with a system URI: qemu:///system
 # OSINFO=detect=on,require=off         # virt-install --osinfo value
 # OVMF_CODE=/usr/share/edk2/ovmf/OVMF_CODE.fd  # explicit UEFI firmware (optional)
 

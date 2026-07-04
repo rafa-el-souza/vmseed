@@ -86,6 +86,61 @@ common ones: `DOMAIN`, `RAM_MB`, `VCPUS`, `LIBVIRT_URI`, `VER`, `ARCH`,
 
 Your personal `fedora-cloud.conf` is git-ignored; only the `.example` is tracked.
 
+## Session URI with a bridged network
+
+The default `qemu:///session` + `NETWORK=user` keeps everything unprivileged but
+gives the guest no routable IP (no `domifaddr` lease, no inbound SSH). To get a
+**real IP while staying on the session URI**, attach the VM to an existing Linux
+bridge via QEMU's setuid `qemu-bridge-helper`. The VM stays unprivileged; only
+the one-time bridge/ACL setup needs root.
+
+**1. Have a bridge.** The simplest is to reuse libvirt's default NAT bridge
+`virbr0` (owned by *system* libvirt, with its own dnsmasq DHCP):
+
+```bash
+sudo virsh net-start default        # if not already active
+sudo virsh net-autostart default    # persist across reboots
+ip -br link show virbr0             # confirm it exists
+```
+
+For an IP on your physical LAN instead, create a NetworkManager bridge (e.g.
+`br0`) enslaving your NIC and use that name below.
+
+**2. Allow the bridge for the unprivileged helper** (one-time, needs root). Add
+the bridge to the QEMU helper ACL and confirm the helper is setuid:
+
+```bash
+echo 'allow virbr0' | sudo tee -a /etc/qemu/bridge.conf
+ls -l /usr/libexec/qemu-bridge-helper   # want -rwsr-xr-x (Debian/Ubuntu: /usr/lib/qemu/)
+# if the setuid bit is missing:  sudo chmod u+s /usr/libexec/qemu-bridge-helper
+```
+
+**3. Point the config at the bridge** (keep the session URI):
+
+```ini
+LIBVIRT_URI=qemu:///session
+NETWORK=bridge=virbr0
+```
+
+**4. Boot and connect by IP.** The DHCP server belongs to the *system* side
+(virbr0's dnsmasq), so query the lease there even though the VM runs in your
+session:
+
+```bash
+./fedora-cloud.sh --config fedora-cloud.conf run bios
+virsh -c qemu:///system net-dhcp-leases default   # -> the guest's IP (virbr0)
+# any bridge:  ip neigh show dev virbr0
+ssh -i keys/admin admin@<IP>
+```
+
+Notes:
+- `virbr0` must be **active before** the VM boots, or the interface has nothing to
+  attach to.
+- The guest lands on the `192.168.122.0/24` NAT network; reachable from the host,
+  NAT'd outbound — same addressing as a system `network=default`, but the domain
+  itself stays under `qemu:///session`.
+- `bridge=<name>` passes the config validator; no other change is needed.
+
 ## Quick start (one command)
 
 With `keys/` populated and a config file ready, `run` does everything —
