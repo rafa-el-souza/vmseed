@@ -95,7 +95,7 @@ Generated artifacts live **outside** the repo, in directories you configure
 $OVERLAY_IMAGE_DIR/<DOMAIN>.qcow2     # the qcow2 overlay (base image stays pristine)
 $OVERLAY_IMAGE_DIR/build/user-data    # rendered cloud-config
 $OVERLAY_IMAGE_DIR/build/meta-data
-$OVERLAY_IMAGE_DIR/build/seed.iso     # only if cloud-localds is installed
+$OVERLAY_IMAGE_DIR/build/seed.iso     # with SEED_METHOD=seed-iso (the default)
 $BASE_IMAGE_DIR/Fedora-Cloud-…qcow2   # downloaded base image(s)
 $BASE_IMAGE_DIR/{fedora.gpg,CHECKSUM,CHECKSUM.verified}
 ```
@@ -108,7 +108,7 @@ require a `--config <file>` (see [Configuration](#configuration)):
 
 | Command | Does |
 |---------|------|
-| `fedora-cloud.sh --config <f> build` | render the seed into `$OVERLAY_IMAGE_DIR/build/` (+ optional `seed.iso`) |
+| `fedora-cloud.sh --config <f> build` | render the seed into `$OVERLAY_IMAGE_DIR/build/` (+ `seed.iso` unless `SEED_METHOD=cloud-init`) |
 | `fedora-cloud.sh --config <f> boot [--fresh] <image> [MODE]` | boot an existing image under libvirt |
 | `fedora-cloud.sh --config <f> run [MODE\|--download-only]` | download + verify + build + boot, end-to-end |
 
@@ -140,6 +140,20 @@ expansion) — use an absolute path. Other common keys: `STD_USER` / `ADMIN_USER
 `OVMF_CODE`, and `COMPOSE` / `CHECKSUM_URL` (to pin a download).
 
 Your personal `fedora-cloud.conf` is git-ignored; only the `.example` is tracked.
+
+## Seed delivery
+
+`SEED_METHOD` controls how the rendered cloud-config reaches the guest:
+
+| `SEED_METHOD` | `build` produces | `boot` attaches | Needs `cloud-localds` |
+|---------------|------------------|-----------------|-----------------------|
+| `seed-iso` (default) | a `cidata` ISO at `$OVERLAY_IMAGE_DIR/build/seed.iso` | that ISO, as a CDROM (`--disk …,device=cdrom`) | **yes**, at `build` time |
+| `cloud-init` | just `user-data` + `meta-data` | via `virt-install --cloud-init` (it builds its own ISO) | no |
+
+With `seed-iso` the exact ISO you can inspect is the one that boots, and the same
+file works with a manual `qemu-system` invocation. With `cloud-init` you avoid the
+`cloud-localds` dependency, but the seed virt-install boots is its own internal
+copy. Both produce an identical NoCloud datasource on the guest.
 
 ## SSH keys
 
@@ -313,8 +327,8 @@ attestation.
    ```
 
    This renders `$OVERLAY_IMAGE_DIR/build/user-data`, validates it with
-   `cloud-init schema`, and (if `cloud-localds` is installed) produces
-   `$OVERLAY_IMAGE_DIR/build/seed.iso`.
+   `cloud-init schema`, and — with the default `SEED_METHOD=seed-iso` — builds
+   `$OVERLAY_IMAGE_DIR/build/seed.iso` (see [Seed delivery](#seed-delivery)).
 
    > Install the tooling on Fedora with:
    > `sudo dnf install cloud-utils virt-install libvirt qemu-img edk2-ovmf`
@@ -329,16 +343,14 @@ attestation.
    ./fedora-cloud.sh --config fedora-cloud.conf boot Fedora-Cloud-Base-UKI.qcow2 uefi-secure # UKI + Secure Boot
    ```
 
-   `boot` feeds `$OVERLAY_IMAGE_DIR/build/{user-data,meta-data}` to `virt-install
-   --cloud-init` (which builds and attaches the NoCloud seed itself), boots from
-   a qcow2 **overlay** so the base image stays pristine, and lets libvirt's
-   firmware autoselection pick OVMF for the UEFI modes. Re-run with `--fresh` to
-   reset the disk.
+   `boot` attaches the seed per [`SEED_METHOD`](#seed-delivery), boots from a
+   qcow2 **overlay** so the base image stays pristine, and lets libvirt's firmware
+   autoselection pick OVMF for the UEFI modes. Re-run with `--fresh` to reset the
+   disk.
 
    For cloud providers, pass `$OVERLAY_IMAGE_DIR/build/user-data` to the
    platform's user-data field instead (e.g. `openstack server create --user-data
-   …/build/user-data`, EC2 user data, ...). The `build/seed.iso` is only needed
-   for manual qemu/`cloud-localds` workflows.
+   …/build/user-data`, EC2 user data, ...).
 
 4. Connect. With the default **`qemu:///session` + `NETWORK=user`**, the guest is
    NAT'd behind user-mode networking, so `domifaddr` won't show a routable lease —

@@ -34,6 +34,10 @@ BASE_IMAGE_DIR=/var/lib/fedora-cloud/base
 #                                      # no = fail (you must provide the key yourself)
 # ENCRYPT_KEYS=yes                     # auto-generated keys: yes = passphrase prompt
 #                                      # (interactive); no = -N '' (non-interactive)
+# SEED_METHOD=seed-iso                 # how the cloud-init seed reaches the guest:
+#                                      #   seed-iso   build a cidata ISO (needs cloud-localds)
+#                                      #              and attach it as a CDROM (default)
+#                                      #   cloud-init let virt-install build+attach its own seed
 # INSTANCE_ID=fedora-01                # cloud-init instance-id  [A-Za-z0-9._-]
 # VM_HOSTNAME=fedora-01                # guest hostname          [A-Za-z0-9._-]
 

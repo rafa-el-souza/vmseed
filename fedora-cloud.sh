@@ -62,9 +62,9 @@ main() {
   _is_known_key() {
     case "$1" in
       TEMPLATE|KEYS_DIR|STD_KEY_FILE|ADM_KEY_FILE|TMUX_CONF|OVERLAY_IMAGE_DIR|\
-      BASE_IMAGE_DIR|STD_USER|ADMIN_USER|GENERATE_KEYS|ENCRYPT_KEYS|INSTANCE_ID|\
-      VM_HOSTNAME|DOMAIN|RAM_MB|VCPUS|LIBVIRT_URI|NETWORK|OSINFO|OVMF_CODE|VER|ARCH|\
-      FEDORA_GPG_URL|CHECKSUM_URL|COMPOSE) return 0 ;;
+      BASE_IMAGE_DIR|STD_USER|ADMIN_USER|GENERATE_KEYS|ENCRYPT_KEYS|SEED_METHOD|\
+      INSTANCE_ID|VM_HOSTNAME|DOMAIN|RAM_MB|VCPUS|LIBVIRT_URI|NETWORK|OSINFO|OVMF_CODE|\
+      VER|ARCH|FEDORA_GPG_URL|CHECKSUM_URL|COMPOSE) return 0 ;;
       *) return 1 ;;
     esac
   }
@@ -89,6 +89,8 @@ main() {
         [[ "$val" =~ ^[A-Za-z0-9._-]+$ ]] || _die "$where may contain only [A-Za-z0-9._-], got '$val'" ;;
       GENERATE_KEYS|ENCRYPT_KEYS)
         [[ "$val" =~ ^(yes|no)$ ]] || _die "$where must be 'yes' or 'no', got '$val'" ;;
+      SEED_METHOD)
+        [[ "$val" =~ ^(seed-iso|cloud-init)$ ]] || _die "$where must be 'seed-iso' or 'cloud-init', got '$val'" ;;
       STD_USER|ADMIN_USER)
         [[ "$val" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] \
           || _die "$where must be a valid Linux username (^[a-z_][a-z0-9_-]{0,31}$), got '$val'"
@@ -193,14 +195,10 @@ main() {
     fi
   }
 
-  _build_seed_iso() {  # optional NoCloud ISO for non-libvirt/manual qemu flows
+  _build_seed_iso() {  # build the NoCloud cidata ISO (caller has ensured cloud-localds)
     local dir="$1"
-    if command -v cloud-localds >/dev/null 2>&1; then
-      _log "building seed.iso"
-      cloud-localds "$dir/seed.iso" "$dir/user-data" "$dir/meta-data"
-    else
-      _note "cloud-localds not found (install cloud-utils); wrote user-data + meta-data only"
-    fi
+    _log "building seed.iso"
+    cloud-localds "$dir/seed.iso" "$dir/user-data" "$dir/meta-data"
   }
 
   # ---- boot helpers ----
@@ -349,7 +347,12 @@ main() {
     printf 'instance-id: %s\nlocal-hostname: %s\n' "$instance_id" "$vm_hostname" > "$seed_dir/meta-data"
 
     _validate_seed "$seed_dir/user-data"
-    _build_seed_iso "$seed_dir"
+    # SEED_METHOD=seed-iso: build the cidata ISO that boot attaches (cloud-localds
+    # required). cloud-init: boot lets virt-install build its own seed, so skip.
+    if [[ "$seed_method" == "seed-iso" ]]; then
+      _need cloud-localds
+      _build_seed_iso "$seed_dir"
+    fi
     _log "seed ready: $seed_dir/user-data"
   }
 
@@ -363,10 +366,22 @@ main() {
     local mode="${2:-bios}"
 
     _need virt-install virsh qemu-img
-    local seed_dir="$overlay_image_dir/build" f
-    for f in "$seed_dir/user-data" "$seed_dir/meta-data"; do
-      [[ -f "$f" ]] || _die "$f not found — run '$self --config <file> build' first"
-    done
+    local seed_dir="$overlay_image_dir/build"
+    # How the seed reaches the guest depends on SEED_METHOD:
+    #   seed-iso    -> attach the cidata ISO built by `build` as a CDROM
+    #   cloud-init  -> let virt-install build+attach its own seed from the files
+    local -a seed_args
+    if [[ "$seed_method" == "seed-iso" ]]; then
+      [[ -f "$seed_dir/seed.iso" ]] \
+        || _die "$seed_dir/seed.iso not found — run '$self --config <file> build' first (SEED_METHOD=seed-iso)"
+      seed_args=(--disk "path=$seed_dir/seed.iso,device=cdrom")
+    else
+      local f
+      for f in "$seed_dir/user-data" "$seed_dir/meta-data"; do
+        [[ -f "$f" ]] || _die "$f not found — run '$self --config <file> build' first"
+      done
+      seed_args=(--cloud-init "user-data=$seed_dir/user-data,meta-data=$seed_dir/meta-data")
+    fi
     [[ -f "$image" ]] || _die "image not found: $image"
 
     local -a boot_args
@@ -387,10 +402,10 @@ main() {
       --osinfo "$osinfo" \
       --import \
       --disk "path=$overlay,format=qcow2,bus=virtio" \
-      --cloud-init "user-data=$seed_dir/user-data,meta-data=$seed_dir/meta-data" \
       --network "$network" \
       --graphics none \
       --noautoconsole \
+      "${seed_args[@]}" \
       "${boot_args[@]}"
 
     _print_connect_help
@@ -491,6 +506,7 @@ EOF
     [ADMIN_USER]="admin"
     [GENERATE_KEYS]="yes"
     [ENCRYPT_KEYS]="yes"
+    [SEED_METHOD]="seed-iso"
     [INSTANCE_ID]="fedora-01"
     [VM_HOSTNAME]="fedora-01"
     [DOMAIN]="fedora-cloud-01"
@@ -529,6 +545,7 @@ EOF
   local admin_user="${cfg[ADMIN_USER]}"
   local generate_keys="${cfg[GENERATE_KEYS]}"
   local encrypt_keys="${cfg[ENCRYPT_KEYS]}"
+  local seed_method="${cfg[SEED_METHOD]}"
   local std_key_file="${cfg[STD_KEY_FILE]}"
   local adm_key_file="${cfg[ADM_KEY_FILE]}"
   # Required (no default); presence is enforced per-command by _require_* below.
