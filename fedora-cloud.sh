@@ -52,8 +52,9 @@ main() {
   _is_known_key() {
     case "$1" in
       TEMPLATE|KEYS_DIR|STD_KEY_FILE|ADM_KEY_FILE|TMUX_CONF|BUILD_DIR|IMAGES_DIR|\
-      STD_USER|ADMIN_USER|INSTANCE_ID|VM_HOSTNAME|DOMAIN|RAM_MB|VCPUS|LIBVIRT_URI|\
-      NETWORK|OSINFO|OVMF_CODE|VER|ARCH|FEDORA_GPG_URL|CHECKSUM_URL|COMPOSE) return 0 ;;
+      STD_USER|ADMIN_USER|GENERATE_KEYS|ENCRYPT_KEYS|INSTANCE_ID|VM_HOSTNAME|DOMAIN|\
+      RAM_MB|VCPUS|LIBVIRT_URI|NETWORK|OSINFO|OVMF_CODE|VER|ARCH|FEDORA_GPG_URL|\
+      CHECKSUM_URL|COMPOSE) return 0 ;;
       *) return 1 ;;
     esac
   }
@@ -76,6 +77,8 @@ main() {
         [[ "$val" =~ ^[a-z]+(\+[a-z]+)?:// ]] || _die "$where must be a libvirt URI (e.g. qemu:///session)" ;;
       DOMAIN|INSTANCE_ID|VM_HOSTNAME)
         [[ "$val" =~ ^[A-Za-z0-9._-]+$ ]] || _die "$where may contain only [A-Za-z0-9._-], got '$val'" ;;
+      GENERATE_KEYS|ENCRYPT_KEYS)
+        [[ "$val" =~ ^(yes|no)$ ]] || _die "$where must be 'yes' or 'no', got '$val'" ;;
       STD_USER|ADMIN_USER)
         [[ "$val" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] \
           || _die "$where must be a valid Linux username (^[a-z_][a-z0-9_-]{0,31}$), got '$val'"
@@ -122,6 +125,36 @@ main() {
       *"PRIVATE KEY"*)     _die "a key file contains a PRIVATE key — use the .pub file" ;;
       *)                   _die "not an SSH public key: ${key:0:40}..." ;;
     esac
+  }
+
+  _ensure_keypair() {  # _ensure_keypair <pubfile> <comment> — create the key if absent
+    local pub="$1" comment="$2"
+    [[ -f "$pub" ]] && return 0
+    # Missing key. Only generate it if the operator opted in (GENERATE_KEYS=yes).
+    [[ "$generate_keys" == "yes" ]] \
+      || _die "key file not found: $pub (GENERATE_KEYS=no — create it, or set GENERATE_KEYS=yes)"
+    # To create it we need the .pub naming convention so we can derive the
+    # private-key path.
+    [[ "$pub" == *.pub ]] \
+      || _die "key file '$pub' does not exist and can't be auto-generated (its name must end in .pub)"
+    _need ssh-keygen
+    local priv="${pub%.pub}" dir
+    dir="$(dirname "$pub")"
+    mkdir -p "$dir" && chmod 700 "$dir"
+    if [[ -f "$priv" ]]; then
+      # Private key exists but its public half is gone — derive it, don't clobber.
+      _log "deriving public key from existing private key: $priv"
+      ssh-keygen -y -f "$priv" > "$pub"
+    elif [[ "$encrypt_keys" == "no" ]]; then
+      # Non-interactive: empty passphrase. -a (KDF rounds) is a no-op here.
+      _log "no key at $pub — generating an UNENCRYPTED ed25519 key pair (ENCRYPT_KEYS=no)"
+      ssh-keygen -t ed25519 -a 100 -N '' -f "$priv" -C "$comment"
+    else
+      # Interactive: ssh-keygen prompts the operator for a passphrase.
+      _log "no key at $pub — generating an ed25519 key pair (ssh-keygen will prompt for a passphrase)"
+      ssh-keygen -t ed25519 -a 100 -f "$priv" -C "$comment"
+    fi
+    [[ -f "$pub" ]] || _die "failed to create $pub"
   }
 
   _render_user_data() {  # _render_user_data <std_key> <adm_key> <tmux_b64> <std_user> <admin_user>
@@ -281,9 +314,14 @@ main() {
     [[ "$std_user" != "$admin_user" ]] \
       || _die "STD_USER and ADMIN_USER must differ (both '$std_user')"
     local f
-    for f in "$template" "$std_key_file" "$adm_key_file" "$tmux_conf"; do
+    for f in "$template" "$tmux_conf"; do
       [[ -f "$f" ]] || _die "missing required file: $f"
     done
+    # SSH keys: use the files if present. If absent, GENERATE_KEYS=no fails;
+    # GENERATE_KEYS=yes (default) creates them — ENCRYPT_KEYS=yes prompts for a
+    # passphrase (once per key), ENCRYPT_KEYS=no makes it non-interactive.
+    _ensure_keypair "$std_key_file" "$std_user"
+    _ensure_keypair "$adm_key_file" "$admin_user"
     local std_key adm_key tmux_b64
     std_key="$(< "$std_key_file")"
     adm_key="$(< "$adm_key_file")"
@@ -400,7 +438,7 @@ main() {
 $self — provision & boot a Fedora Cloud image with cloud-init
 
 Usage:
-  $self --config <file> build                         render keys/*.pub into build/user-data
+  $self --config <file> build                         render SSH keys into build/user-data
   $self --config <file> boot [--fresh] <image> [MODE] boot an existing image under libvirt
   $self --config <file> run  [MODE|--download-only]   download + verify + build + boot
   $self help                                          this message
@@ -430,11 +468,13 @@ EOF
   local -A cfg=(
     [TEMPLATE]="$script_dir/user-data.yaml"
     [TMUX_CONF]="$script_dir/dotfiles/tmux.conf"
-    [KEYS_DIR]="$script_dir/keys"
+    [KEYS_DIR]="$HOME/.ssh"
     [BUILD_DIR]="$script_dir/build"
     [IMAGES_DIR]="$script_dir/images"
     [STD_USER]="appuser"
     [ADMIN_USER]="admin"
+    [GENERATE_KEYS]="yes"
+    [ENCRYPT_KEYS]="yes"
     [INSTANCE_ID]="fedora-01"
     [VM_HOSTNAME]="fedora-01"
     [DOMAIN]="fedora-cloud-01"
@@ -470,6 +510,8 @@ EOF
   local tmux_conf="${cfg[TMUX_CONF]}"
   local std_user="${cfg[STD_USER]}"
   local admin_user="${cfg[ADMIN_USER]}"
+  local generate_keys="${cfg[GENERATE_KEYS]}"
+  local encrypt_keys="${cfg[ENCRYPT_KEYS]}"
   local std_key_file="${cfg[STD_KEY_FILE]}"
   local adm_key_file="${cfg[ADM_KEY_FILE]}"
   local build_dir="${cfg[BUILD_DIR]}"

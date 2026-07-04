@@ -3,18 +3,23 @@
 #
 # '#' comments and blank lines are ignored. Surrounding whitespace is trimmed.
 # Unknown keys or malformed values are rejected. Any key you omit keeps the
-# built-in default shown below.
+# built-in default shown below. Paths are LITERAL: '~' is NOT expanded — use an
+# absolute path if you override a *_DIR / *_FILE (the KEYS_DIR default is $HOME/.ssh).
 
 # --- seed / paths ---
 # TEMPLATE=./user-data.yaml            # cloud-config template
-# TMUX_CONF=./dotfiles/tmux.conf       # tmux config injected into appuser's ~/.tmux.conf
-# KEYS_DIR=./keys                      # where the *.pub files live
+# TMUX_CONF=./dotfiles/tmux.conf       # tmux config injected into the std user's ~/.tmux.conf
+# KEYS_DIR=~/.ssh                      # where the SSH keys live (default $HOME/.ssh)
 # STD_USER=appuser                     # standard (no-sudo) username; valid Linux name
 # ADMIN_USER=admin                     # admin (wheel, passwordless sudo) username
 #                                      # must differ from each other, and must not be a
 #                                      # reserved/system account (root, fedora, default, ...)
-# STD_KEY_FILE=./keys/appuser.pub      # defaults to KEYS_DIR/<STD_USER>.pub
-# ADM_KEY_FILE=./keys/admin.pub        # defaults to KEYS_DIR/<ADMIN_USER>.pub
+# STD_KEY_FILE=~/.ssh/appuser.pub      # defaults to KEYS_DIR/<STD_USER>.pub
+# ADM_KEY_FILE=~/.ssh/admin.pub        # defaults to KEYS_DIR/<ADMIN_USER>.pub
+# GENERATE_KEYS=yes                    # if a key file is absent: yes = create it;
+#                                      # no = fail (you must provide the key yourself)
+# ENCRYPT_KEYS=yes                     # auto-generated keys: yes = passphrase prompt
+#                                      # (interactive); no = -N '' (non-interactive)
 # BUILD_DIR=./build                    # generated seed + overlay
 # IMAGES_DIR=./images                  # downloaded images + CHECKSUM + keyring
 # INSTANCE_ID=fedora-01                # cloud-init instance-id  [A-Za-z0-9._-]

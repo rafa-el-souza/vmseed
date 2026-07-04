@@ -7,10 +7,7 @@
 # Downloaded images, checksums and keyring
 /images/
 
-# Never commit private keys or downloaded images
-/keys/*
-!/keys/*.pub
-!/keys/README.md
+# Never commit key material or images (SSH keys live in ~/.ssh, outside the repo)
 *.pem
 *.qcow2
 *.img

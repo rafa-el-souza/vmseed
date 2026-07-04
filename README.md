@@ -11,9 +11,9 @@ on first boot with two SSH-only users:
 The usernames shown are the **defaults** — set `STD_USER` / `ADMIN_USER` in your
 config to rename them. They must be valid Linux names, must differ from each
 other, and can't be a reserved/system account (`root`, `fedora`, `default`,
-`nobody`, …) — the build rejects any of these. Each user gets a public key
-loaded from `keys/<username>.pub` (override with `STD_KEY_FILE` / `ADM_KEY_FILE`).
-Password login is disabled (`lock_passwd: true`) — SSH key authentication only.
+`nobody`, …) — the build rejects any of these. Each user gets a public key from
+`~/.ssh/<username>.pub` (see [SSH keys](#ssh-keys)). Password login is disabled
+(`lock_passwd: true`) — SSH key authentication only.
 
 ## What gets provisioned
 
@@ -70,8 +70,8 @@ sshd` validates and applies the config — a malformed config fails the boot lou
 instead of locking you out.
 
 > **`FUTURE` is aggressive.** It can reject older SSH/TLS clients. Modern OpenSSH
-> with ed25519/curve25519 keys (as generated in `keys/`) is fine. If you need
-> broader compatibility, change the `runcmd` to
+> with the ed25519 keys this tool generates is fine. If you need broader
+> compatibility, change the `runcmd` to
 > `update-crypto-policies --set DEFAULT:NO-SHA1`.
 >
 > `AllowUsers` is generated from `STD_USER`/`ADMIN_USER` at build time, so it
@@ -83,18 +83,20 @@ instead of locking you out.
 fedora-cloud.sh          # single entry point: build | boot | run | help
 fedora-cloud.conf.example # sample config — copy to fedora-cloud.conf and edit
 user-data.yaml           # cloud-config TEMPLATE (PLACEHOLDER_* tokens)
-dotfiles/tmux.conf       # appuser's tmux config, injected into ~/.tmux.conf
-keys/                    # your *.pub files go here (private keys are git-ignored)
+dotfiles/tmux.conf       # standard user's tmux config, injected into ~/.tmux.conf
 build/                   # generated: user-data, meta-data, seed.iso, overlay (git-ignored)
 images/                  # downloaded qcow2 + CHECKSUM + fedora.gpg (git-ignored)
 ```
+
+SSH keys live in `KEYS_DIR` (default `~/.ssh`), outside the repo — see
+[SSH keys](#ssh-keys).
 
 Everything is one script, `fedora-cloud.sh`, with three subcommands. All of them
 require a `--config <file>` (see [Configuration](#configuration)):
 
 | Command | Does |
 |---------|------|
-| `fedora-cloud.sh --config <f> build` | render `keys/*.pub` into `build/user-data` (+ optional `seed.iso`) |
+| `fedora-cloud.sh --config <f> build` | render the SSH keys into `build/user-data` (+ optional `seed.iso`) |
 | `fedora-cloud.sh --config <f> boot [--fresh] <image> [MODE]` | boot an existing image under libvirt |
 | `fedora-cloud.sh --config <f> run [MODE\|--download-only]` | download + verify + build + boot, end-to-end |
 
@@ -119,6 +121,51 @@ common ones: `STD_USER` / `ADMIN_USER` (the two usernames), `DOMAIN`, `RAM_MB`,
 `CHECKSUM_URL` (to pin a download).
 
 Your personal `fedora-cloud.conf` is git-ignored; only the `.example` is tracked.
+
+## SSH keys
+
+Each provisioned user is authenticated by an SSH **public key** read at build
+time from `KEYS_DIR/<username>.pub` (default `KEYS_DIR=~/.ssh`, so
+`~/.ssh/appuser.pub` and `~/.ssh/admin.pub`). Override individual paths with
+`STD_KEY_FILE` / `ADM_KEY_FILE`.
+
+> **Config paths are literal.** The config file is parsed, never sourced, so `~`
+> is **not** expanded there — use an absolute path (e.g. `/home/you/.ssh`) if you
+> set `KEYS_DIR` yourself. The built-in default is your real `$HOME/.ssh`.
+
+**If a key file is missing**, `GENERATE_KEYS` decides what happens:
+
+| `GENERATE_KEYS` | Behaviour when a key file is absent |
+|-----------------|-------------------------------------|
+| `yes` (default) | `build` creates it (see `ENCRYPT_KEYS` below) |
+| `no` | `build` fails — you must provide the key yourself |
+
+When generating, `build` runs:
+
+```bash
+ssh-keygen -t ed25519 -a 100 -f ~/.ssh/<username> -C <username>
+```
+
+(`-a 100` sets 100 KDF rounds, hardening an encrypted private key against
+brute force.) Whether it's encrypted is controlled by `ENCRYPT_KEYS`:
+
+| `ENCRYPT_KEYS` | Behaviour |
+|----------------|-----------|
+| `yes` (default) | ssh-keygen **prompts** for a passphrase — interactive, once per key created |
+| `no` | generates with `-N ''` (no passphrase) — fully **non-interactive**, for automation |
+
+A passphrase is never stored in the config file. If a private key already exists
+but its `.pub` is missing, `build` derives the `.pub` (`ssh-keygen -y`) instead
+of overwriting the private key.
+
+To reuse an existing key, point `STD_KEY_FILE` / `ADM_KEY_FILE` at its `.pub`, or
+copy it into place:
+
+```bash
+cp ~/.ssh/id_ed25519.pub ~/.ssh/admin.pub
+```
+
+Only public keys ever enter the cloud-config; private keys stay on your machine.
 
 ## Session URI with a bridged network
 
@@ -164,7 +211,7 @@ session:
 ./fedora-cloud.sh --config fedora-cloud.conf run bios
 virsh -c qemu:///system net-dhcp-leases default   # -> the guest's IP (virbr0)
 # any bridge:  ip neigh show dev virbr0
-ssh -i keys/admin admin@<IP>
+ssh -i ~/.ssh/admin admin@<IP>
 ```
 
 Notes:
@@ -177,7 +224,7 @@ Notes:
 
 ## Quick start (one command)
 
-With `keys/` populated and a config file ready, `run` does everything —
+With a config file ready (keys are auto-generated if missing), `run` does everything —
 downloads the image, **verifies its GPG signature and SHA-256 checksum**, builds
 the seed, and boots:
 
@@ -228,11 +275,12 @@ attestation.
 
 ## Usage
 
-1. Provide the public keys (see `keys/README.md`):
+1. (Optional) Provide the SSH keys yourself — otherwise `build` generates them
+   (see [SSH keys](#ssh-keys)):
 
    ```bash
-   ssh-keygen -t ed25519 -f keys/appuser -C appuser@fedora
-   ssh-keygen -t ed25519 -f keys/admin   -C admin@fedora
+   ssh-keygen -t ed25519 -a 100 -f ~/.ssh/appuser -C appuser@fedora
+   ssh-keygen -t ed25519 -a 100 -f ~/.ssh/admin   -C admin@fedora
    ```
 
 2. Build the seed (`--config` is required):
@@ -284,8 +332,8 @@ attestation.
 
    ```bash
    virsh -c qemu:///system domifaddr fedora-cloud-01
-   ssh -i keys/admin   admin@<IP>
-   ssh -i keys/appuser appuser@<IP>
+   ssh -i ~/.ssh/admin   admin@<IP>
+   ssh -i ~/.ssh/appuser appuser@<IP>
    ```
 
 ## Verify on the guest
@@ -341,7 +389,7 @@ routable IP, switch to a system NAT setup — set `LIBVIRT_URI=qemu:///system` a
 - Ensure the default network is active: `virsh -c qemu:///system net-start default`.
 
 **SSH: `Permission denied (publickey)`.**
-- You're connecting with the wrong key — use `-i keys/admin` / `-i keys/appuser` matching the `.pub` you built with.
+- You're connecting with the wrong key — use `-i ~/.ssh/admin` / `-i ~/.ssh/appuser` (the private key whose `.pub` you built with).
 - `AllowUsers` only permits the two provisioned users (`STD_USER`/`ADMIN_USER`); any other account is rejected. Check the sshd drop-in.
 - cloud-init may not have finished. On the console: `cloud-init status --long` should read `done`; check `/var/log/cloud-init-output.log`.
 
