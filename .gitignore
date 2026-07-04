@@ -1,5 +1,6 @@
 # Personal config (keep the .example tracked)
 /fedora-cloud.conf
+/temp/
 
 # OVERLAY_IMAGE_DIR and BASE_IMAGE_DIR are configured (no default) and expected
 # outside the repo. Never commit key material or images regardless of location.
