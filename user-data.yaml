@@ -1,0 +1,73 @@
+#cloud-config
+# The first line MUST be exactly "#cloud-config" — cloud-init uses it to
+# detect the payload format. Do not add anything before it.
+#
+# This is a TEMPLATE. The PLACEHOLDER_* tokens are replaced with the contents
+# of your public-key files by `fedora-cloud.sh build`. Do not paste keys here.
+
+users:
+  # Declaring `users:` replaces cloud-init's default user set. Keep `default`
+  # to preserve the distro's built-in "fedora" user; remove it to end up with
+  # ONLY the two users below.
+  - default
+
+  # ---- Standard (unprivileged) user ----
+  - name: appuser
+    gecos: "Standard Application User"
+    shell: /bin/bash
+    lock_passwd: true          # no password login; SSH key only
+    ssh_authorized_keys:
+      - PLACEHOLDER_STANDARD_KEY
+
+  # ---- Admin user (passwordless sudo) ----
+  - name: admin
+    gecos: "Administrator"
+    shell: /bin/bash
+    groups: [wheel]            # 'wheel' is the sudo group on Fedora/RHEL
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    lock_passwd: true
+    ssh_authorized_keys:
+      - PLACEHOLDER_ADMIN_KEY
+
+# --- Hardened SSH daemon config ----------------------------------------------
+# Fedora's /etc/ssh/sshd_config ends with `Include /etc/ssh/sshd_config.d/*.conf`
+# and sshd uses the FIRST value it obtains for each option, so a drop-in that
+# sorts early (00-) overrides the distro defaults without editing the main file.
+write_files:
+  - path: /etc/ssh/sshd_config.d/00-hardening.conf
+    owner: root:root
+    permissions: '0600'
+    content: |
+      # Managed by cloud-init. Key-only auth; no root, no passwords.
+      PermitRootLogin no
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      ChallengeResponseAuthentication no
+      PubkeyAuthentication yes
+      PermitEmptyPasswords no
+
+      # Limit who can log in to the two provisioned users.
+      AllowUsers admin appuser
+
+      # Reduce brute-force / idle exposure.
+      MaxAuthTries 3
+      LoginGraceTime 20
+      ClientAliveInterval 300
+      ClientAliveCountMax 2
+
+      # Disable rarely-needed features that widen the attack surface.
+      X11Forwarding no
+      AllowAgentForwarding no
+      AllowTcpForwarding no
+      PermitTunnel no
+      # Ciphers/MACs/KEX come from the system-wide crypto-policy (set below).
+
+runcmd:
+  # 1) Tighten the system-wide crypto policy. FUTURE disables SHA-1, CBC, and
+  #    sub-3072-bit RSA across sshd/TLS/etc. Switch to "DEFAULT:NO-SHA1" if you
+  #    need to support older clients. update-crypto-policies rewrites the
+  #    per-app configs; the sshd reload below then picks them up.
+  - [ update-crypto-policies, --set, FUTURE ]
+  # 2) Validate the sshd drop-in and apply it. `sshd -t` fails the boot loudly
+  #    if the config is broken, rather than silently locking you out.
+  - [ sh, -c, "sshd -t && systemctl reload sshd" ]
