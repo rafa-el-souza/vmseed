@@ -2,8 +2,9 @@
 # The first line MUST be exactly "#cloud-config" — cloud-init uses it to
 # detect the payload format. Do not add anything before it.
 #
-# This is a TEMPLATE. The PLACEHOLDER_* tokens are replaced with the contents
-# of your public-key files by `fedora-cloud.sh build`. Do not paste keys here.
+# This is a TEMPLATE. The PLACEHOLDER_* tokens are replaced at build time by
+# `fedora-cloud.sh build` — the SSH public keys, and the base64-encoded
+# .tmux.conf. Do not paste keys or file contents here directly.
 
 users:
   # Declaring `users:` replaces cloud-init's default user set. Keep `default`
@@ -28,6 +29,17 @@ users:
     lock_passwd: true
     ssh_authorized_keys:
       - PLACEHOLDER_ADMIN_KEY
+
+# --- System packages ---------------------------------------------------------
+# Refresh metadata, upgrade the whole system, then install the global tools.
+# dnf is idempotent, so anything already present is left untouched.
+package_update: true
+package_upgrade: true
+packages:
+  - tmux
+  - gh
+  - git
+  - btop
 
 # --- Hardened SSH daemon config ----------------------------------------------
 # Fedora's /etc/ssh/sshd_config ends with `Include /etc/ssh/sshd_config.d/*.conf`
@@ -62,6 +74,16 @@ write_files:
       PermitTunnel no
       # Ciphers/MACs/KEX come from the system-wide crypto-policy (set below).
 
+  # appuser's tmux config — contents injected from .tmux.conf.temp at build time
+  # (base64). `defer: true` writes it in the later stage, after the user (and its
+  # home directory) exist; a plain write_files runs before users are created.
+  - path: /home/appuser/.tmux.conf
+    owner: appuser:appuser
+    permissions: '0644'
+    encoding: b64
+    defer: true
+    content: "PLACEHOLDER_TMUX_CONF_B64"
+
 runcmd:
   # 1) Tighten the system-wide crypto policy. FUTURE disables SHA-1, CBC, and
   #    sub-3072-bit RSA across sshd/TLS/etc. Switch to "DEFAULT:NO-SHA1" if you
@@ -71,3 +93,14 @@ runcmd:
   # 2) Validate the sshd drop-in and apply it. `sshd -t` fails the boot loudly
   #    if the config is broken, rather than silently locking you out.
   - [ sh, -c, "sshd -t && systemctl reload sshd" ]
+  # 3) Per-user setup for appuser only, run as appuser with a login shell so
+  #    HOME and ~ resolve to /home/appuser. git and tmux come from `packages`
+  #    above, which the package module installs before runcmd runs.
+  - [ runuser, -l, appuser, -c, "curl -fsSL https://claude.ai/install.sh | bash" ]
+  - [ runuser, -l, appuser, -c, "git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm" ]
+  - [ runuser, -l, appuser, -c, "git clone -b v2.3.0 https://github.com/catppuccin/tmux.git ~/.config/tmux/plugins/catppuccin/tmux" ]
+  # Install the @plugin list from ~/.tmux.conf so tmux is ready on first use
+  # (no interactive `prefix + I` needed). tpm's headless installer starts a
+  # server to read the config, then git-clones each plugin into ~/.tmux/plugins.
+  # Runs last: catppuccin (above) is `run` by the config and must exist first.
+  - [ runuser, -l, appuser, -c, "~/.tmux/plugins/tpm/bin/install_plugins" ]

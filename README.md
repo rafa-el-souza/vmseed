@@ -11,6 +11,33 @@ on first boot with two SSH-only users:
 Each user gets a public key loaded from a file in `keys/`. Password login is
 disabled (`lock_passwd: true`) — SSH key authentication only.
 
+## What gets provisioned
+
+On first boot, cloud-init also:
+
+- **Upgrades the system** (`package_update` + `package_upgrade`).
+- **Installs global tools**: `tmux`, `gh`, `git`, `btop` (dnf is idempotent, so
+  anything already present is skipped).
+- **Sets up `appuser` only** (run as that user via `runuser -l`):
+  - [Claude Code](https://claude.ai) via `curl -fsSL https://claude.ai/install.sh | bash`
+  - tmux TPM plugin manager → `~/.tmux/plugins/tpm`
+  - tmux Catppuccin theme (v2.3.0) → `~/.config/tmux/plugins/catppuccin/tmux`
+  - all `@plugin`s from `~/.tmux.conf` installed headlessly via
+    `tpm/bin/install_plugins`, so **tmux is ready on first launch** (no
+    interactive `prefix + I`)
+- **Writes `appuser`'s `~/.tmux.conf`** from a build-time file (see below).
+
+### appuser's tmux config (`TMUX_CONF`)
+
+The contents of the file at `TMUX_CONF` (default `./dotfiles/tmux.conf`, tracked
+in this repo) are base64-encoded at build time and injected into the
+cloud-config; on the guest cloud-init decodes them to `/home/appuser/.tmux.conf`
+(owned by `appuser`, written with `defer: true` so it lands *after* the user is
+created). Base64 keeps multi-line content from breaking YAML indentation.
+
+Edit `dotfiles/tmux.conf` to change the shipped config, or point `TMUX_CONF` at a
+different file in your config.
+
 ## SSH hardening
 
 `user-data.yaml` also drops a hardened sshd config into
@@ -51,6 +78,7 @@ instead of locking you out.
 fedora-cloud.sh          # single entry point: build | boot | run | help
 fedora-cloud.conf.example # sample config — copy to fedora-cloud.conf and edit
 user-data.yaml           # cloud-config TEMPLATE (PLACEHOLDER_* tokens)
+dotfiles/tmux.conf       # appuser's tmux config, injected into ~/.tmux.conf
 keys/                    # your *.pub files go here (private keys are git-ignored)
 build/                   # generated: user-data, meta-data, seed.iso, overlay (git-ignored)
 images/                  # downloaded qcow2 + CHECKSUM + fedora.gpg (git-ignored)

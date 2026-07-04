@@ -7,6 +7,7 @@
 
 # --- seed / paths ---
 # TEMPLATE=./user-data.yaml            # cloud-config template
+# TMUX_CONF=./dotfiles/tmux.conf       # tmux config injected into appuser's ~/.tmux.conf
 # KEYS_DIR=./keys                      # where the *.pub files live
 # STD_KEY_FILE=./keys/appuser.pub      # defaults to KEYS_DIR/appuser.pub
 # ADM_KEY_FILE=./keys/admin.pub        # defaults to KEYS_DIR/admin.pub

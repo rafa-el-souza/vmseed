@@ -51,7 +51,7 @@ main() {
   # ---- config: known keys, per-key validation, strict KEY=VALUE parser ----
   _is_known_key() {
     case "$1" in
-      TEMPLATE|KEYS_DIR|STD_KEY_FILE|ADM_KEY_FILE|BUILD_DIR|IMAGES_DIR|\
+      TEMPLATE|KEYS_DIR|STD_KEY_FILE|ADM_KEY_FILE|TMUX_CONF|BUILD_DIR|IMAGES_DIR|\
       INSTANCE_ID|VM_HOSTNAME|DOMAIN|RAM_MB|VCPUS|LIBVIRT_URI|NETWORK|OSINFO|\
       OVMF_CODE|VER|ARCH|FEDORA_GPG_URL|CHECKSUM_URL|COMPOSE) return 0 ;;
       *) return 1 ;;
@@ -80,7 +80,7 @@ main() {
         [[ "$val" =~ ^[A-Za-z0-9=,._:-]+$ ]] || _die "$where has invalid characters: '$val'" ;;
       NETWORK)
         [[ "$val" =~ ^[A-Za-z0-9=,._:/-]+$ ]] || _die "$where has invalid characters: '$val'" ;;
-      TEMPLATE|KEYS_DIR|STD_KEY_FILE|ADM_KEY_FILE|BUILD_DIR|IMAGES_DIR|OVMF_CODE)
+      TEMPLATE|KEYS_DIR|STD_KEY_FILE|ADM_KEY_FILE|TMUX_CONF|BUILD_DIR|IMAGES_DIR|OVMF_CODE)
         [[ "$val" != *[[:space:]]* ]] || _die "$where (a path) must not contain whitespace" ;;
     esac
   }
@@ -114,10 +114,17 @@ main() {
     esac
   }
 
-  _render_user_data() {  # _render_user_data <std_key> <adm_key>  -> user-data on stdout
-    # awk (not sed) so special chars in a key can't break substitution.
-    awk -v std="$1" -v adm="$2" '
-      { gsub(/PLACEHOLDER_STANDARD_KEY/, std); gsub(/PLACEHOLDER_ADMIN_KEY/, adm); print }
+  _render_user_data() {  # _render_user_data <std_key> <adm_key> <tmux_b64>  -> user-data on stdout
+    # awk (not sed) so special chars in a value can't break substitution. The
+    # replacement text is passed literally (gsub's target is a fixed string here,
+    # and none of the values contain awk's '&' backreference character).
+    awk -v std="$1" -v adm="$2" -v tmux="$3" '
+      {
+        gsub(/PLACEHOLDER_STANDARD_KEY/, std)
+        gsub(/PLACEHOLDER_ADMIN_KEY/, adm)
+        gsub(/PLACEHOLDER_TMUX_CONF_B64/, tmux)
+        print
+      }
     ' "$template"
   }
 
@@ -256,19 +263,22 @@ main() {
   # ===================== PUBLIC API (commands) =====================
   cmd_build() {
     _require_config build
-    _need awk
+    _need awk base64
     local f
-    for f in "$template" "$std_key_file" "$adm_key_file"; do
+    for f in "$template" "$std_key_file" "$adm_key_file" "$tmux_conf"; do
       [[ -f "$f" ]] || _die "missing required file: $f"
     done
-    local std_key adm_key
+    local std_key adm_key tmux_b64
     std_key="$(< "$std_key_file")"
     adm_key="$(< "$adm_key_file")"
     _assert_pubkey "$std_key"
     _assert_pubkey "$adm_key"
+    # Inject the tmux config as a single base64 line (encoding: b64 in the
+    # template) so multi-line content can't break YAML indentation.
+    tmux_b64="$(base64 -w0 < "$tmux_conf")"
 
     mkdir -p "$build_dir"
-    _render_user_data "$std_key" "$adm_key" > "$build_dir/user-data"
+    _render_user_data "$std_key" "$adm_key" "$tmux_b64" > "$build_dir/user-data"
     printf 'instance-id: %s\nlocal-hostname: %s\n' "$instance_id" "$vm_hostname" > "$build_dir/meta-data"
 
     _validate_seed "$build_dir/user-data"
@@ -403,6 +413,7 @@ EOF
   # ADM_KEY_FILE default to files under KEYS_DIR and are derived after loading.
   local -A cfg=(
     [TEMPLATE]="$script_dir/user-data.yaml"
+    [TMUX_CONF]="$script_dir/dotfiles/tmux.conf"
     [KEYS_DIR]="$script_dir/keys"
     [BUILD_DIR]="$script_dir/build"
     [IMAGES_DIR]="$script_dir/images"
@@ -437,6 +448,7 @@ EOF
 
   # Project the validated config into readable locals used by the commands.
   local template="${cfg[TEMPLATE]}"
+  local tmux_conf="${cfg[TMUX_CONF]}"
   local std_key_file="${cfg[STD_KEY_FILE]}"
   local adm_key_file="${cfg[ADM_KEY_FILE]}"
   local build_dir="${cfg[BUILD_DIR]}"
