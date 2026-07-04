@@ -1,7 +1,9 @@
 # fedora-cloud.sh configuration — simple KEY=VALUE, one per line.
 # Copy to fedora-cloud.conf and edit. Pass with: fedora-cloud.sh --config fedora-cloud.conf <cmd>
 #
-# '#' comments and blank lines are ignored. Surrounding whitespace is trimmed.
+# Blank lines and '#' comments (whole-line or trailing/inline) are ignored, and
+# surrounding whitespace is trimmed — so you can uncomment a line below and keep
+# its trailing comment.
 # Unknown keys or malformed values are rejected. Paths are LITERAL: '~' is NOT
 # expanded — use an absolute path for any *_DIR / *_FILE.
 #

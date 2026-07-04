@@ -121,6 +121,10 @@ main() {
       [[ -z "$line" || "$line" == \#* ]] && continue
       [[ "$line" == *=* ]] || _die "config:$lineno: not KEY=VALUE: '$line'"
       key="${line%%=*}"; val="${line#*=}"
+      # Strip a trailing inline comment: whitespace followed by '#'. None of the
+      # recognised values contain a space-then-'#', so this is safe (a '#' with
+      # no leading whitespace, e.g. in a hash, is kept).
+      val="${val%%[[:space:]]#*}"
       key="${key%"${key##*[![:space:]]}"}"; key="${key#"${key%%[![:space:]]*}"}"
       val="${val#"${val%%[![:space:]]*}"}"; val="${val%"${val##*[![:space:]]}"}"
       _is_known_key "$key" || _die "config:$lineno: unknown key: '$key'"
