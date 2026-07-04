@@ -1,0 +1,13 @@
+# Generated artifacts
+/build/
+
+# Downloaded images, checksums and keyring
+/images/
+
+# Never commit private keys or downloaded images
+/keys/*
+!/keys/*.pub
+!/keys/README.md
+*.pem
+*.qcow2
+*.img
