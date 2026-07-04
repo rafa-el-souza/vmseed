@@ -231,10 +231,13 @@ main() {
     # location while keeping template-based init. Empty -> libvirt's default.
     [[ -n "$nvram_path" ]] && boot+=",nvram=${nvram_path}"
     _ref=(--boot "$boot")
-    # OVMF Secure Boot needs SMM, and QEMU only supports SMM on the q35 machine.
-    # Without both, firmware autoselection can't match a secure-boot binary
-    # ("Unable to find 'efi' firmware compatible ...").
-    [[ "$mode" == "uefi-secure" ]] && _ref+=(--features smm.state=on --machine q35)
+    # q35 is the modern machine for UEFI, and Secure Boot's SMM only works on q35
+    # (without SMM+q35, autoselection can't match a secure-boot firmware:
+    # "Unable to find 'efi' firmware compatible ...").
+    case "$mode" in
+      uefi)        _ref+=(--machine q35) ;;
+      uefi-secure) _ref+=(--machine q35 --features smm.state=on) ;;
+    esac
   }
 
   _undefine_domain() {  # tear down a prior domain of the same name, incl. UEFI nvram
