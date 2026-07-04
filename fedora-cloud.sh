@@ -500,10 +500,11 @@ EOF
   done
   [[ -n "$config_file" ]] && _load_config "$config_file"
 
-  # Derived defaults: key files follow the usernames and KEYS_DIR unless the
-  # config sets them explicitly (so STD_USER=alice looks for KEYS_DIR/alice.pub).
-  : "${cfg[STD_KEY_FILE]:=${cfg[KEYS_DIR]}/${cfg[STD_USER]}.pub}"
-  : "${cfg[ADM_KEY_FILE]:=${cfg[KEYS_DIR]}/${cfg[ADMIN_USER]}.pub}"
+  # Derived defaults: key files are KEYS_DIR/<user>-<DOMAIN>.pub unless the config
+  # sets them explicitly — so the per-VM keys don't collide across domains
+  # (e.g. STD_USER=alice, DOMAIN=web01 -> KEYS_DIR/alice-web01.pub).
+  : "${cfg[STD_KEY_FILE]:=${cfg[KEYS_DIR]}/${cfg[STD_USER]}-${cfg[DOMAIN]}.pub}"
+  : "${cfg[ADM_KEY_FILE]:=${cfg[KEYS_DIR]}/${cfg[ADMIN_USER]}-${cfg[DOMAIN]}.pub}"
 
   # Project the validated config into readable locals used by the commands.
   local template="${cfg[TEMPLATE]}"

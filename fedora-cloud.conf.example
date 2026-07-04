@@ -14,8 +14,8 @@
 # ADMIN_USER=admin                     # admin (wheel, passwordless sudo) username
 #                                      # must differ from each other, and must not be a
 #                                      # reserved/system account (root, fedora, default, ...)
-# STD_KEY_FILE=~/.ssh/appuser.pub      # defaults to KEYS_DIR/<STD_USER>.pub
-# ADM_KEY_FILE=~/.ssh/admin.pub        # defaults to KEYS_DIR/<ADMIN_USER>.pub
+# STD_KEY_FILE=~/.ssh/appuser-fedora-cloud-01.pub  # defaults to KEYS_DIR/<STD_USER>-<DOMAIN>.pub
+# ADM_KEY_FILE=~/.ssh/admin-fedora-cloud-01.pub    # defaults to KEYS_DIR/<ADMIN_USER>-<DOMAIN>.pub
 # GENERATE_KEYS=yes                    # if a key file is absent: yes = create it;
 #                                      # no = fail (you must provide the key yourself)
 # ENCRYPT_KEYS=yes                     # auto-generated keys: yes = passphrase prompt
