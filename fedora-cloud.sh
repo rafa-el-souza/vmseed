@@ -325,22 +325,46 @@ main() {
     esac
   }
 
+  _expected_sha() {  # SHA-256 hex for <img> from a BSD-tagged CHECKSUM ("SHA256 (file) = hex")
+    local file="$1" img="$2"
+    grep -F "($img) = " "$file" | grep -oE '[0-9a-fA-F]{64}' | tail -1
+  }
+
+  _file_sig() {  # cheap identity signature (size:mtime) to detect a changed file
+    stat -c '%s:%Y' "$1"
+  }
+
   _fetch_and_verify_image() {  # download (if absent) then check SHA-256 against verified CHECKSUM
     local img="$1" checksum_file="$2"
     [[ -n "$img" ]] || _die "image name not found in CHECKSUM"
-    local dest="$base_image_dir/$img"
+    local dest="$base_image_dir/$img" stamp="$base_image_dir/.${img}.verified"
+
+    # The signature-verified expected hash; used both to skip a redundant
+    # re-hash and to key the stamp so a new compose invalidates it.
+    local expected
+    expected="$(_expected_sha "$checksum_file" "$img")"
+    [[ -n "$expected" ]] || _die "no SHA-256 for $img in $(basename "$checksum_file")"
+
     if [[ ! -s "$dest" ]]; then
       _log "downloading $img"
       curl -fL --progress-bar "$base_url/$img" -o "$dest"
+    elif [[ -f "$stamp" && "$(< "$stamp")" == "$expected $(_file_sig "$dest")" ]]; then
+      # Already verified this exact file (same expected hash, size and mtime) on
+      # a previous run — skip re-hashing the multi-GB image.
+      _log "$img already present and verified, skipping re-hash"
+      return 0
     else
-      _log "$img already present, skipping download"
+      _log "$img already present, verifying"
     fi
+
     _log "verifying SHA-256 of $img"
     local line
     line="$( cd "$base_image_dir" \
       && sha256sum -c --ignore-missing "$(basename "$checksum_file")" 2>/dev/null \
       | grep -E "^${img}:" || true )"
     [[ "$line" == "${img}: OK" ]] || _die "checksum verification FAILED for $img"
+    # Stamp so the next run can skip the re-hash while the file stays unchanged.
+    printf '%s %s\n' "$expected" "$(_file_sig "$dest")" > "$stamp"
     _log "checksum OK"
   }
 
@@ -472,8 +496,16 @@ main() {
       _die "IMAGE_VARIANT=uki is UEFI-only; use MODE 'uefi'/'uefi-secure', or IMAGE_VARIANT=generic"
     fi
 
-    _need curl gpgv sha256sum
+    _need curl gpgv sha256sum flock
     mkdir -p "$base_image_dir"
+
+    # Serialize the shared-file fetch/verify (CHECKSUM, CHECKSUM.verified, the
+    # base image) so parallel `run`s queue here instead of racing on those
+    # fixed-name files. Held only for the fetch; the per-domain build+boot below
+    # needs no lock. The lock frees automatically if the process dies.
+    local lock_fd
+    exec {lock_fd}>"$base_image_dir/.fetch.lock"
+    flock "$lock_fd"
 
     local keyring="$base_image_dir/fedora.gpg"
     _fetch_keyring "$keyring"
@@ -497,6 +529,7 @@ main() {
     if [[ "$download_only" == "1" ]]; then
       _fetch_and_verify_image "$generic_img" "$checksum_verified"
       _fetch_and_verify_image "$uki_img"     "$checksum_verified"
+      exec {lock_fd}>&-   # release the fetch lock
       _log "verified images in $base_image_dir:"
       printf '      generic: %s\n' "$generic_img" >&2
       printf '      uki:     %s\n' "$uki_img"     >&2
@@ -509,6 +542,7 @@ main() {
       uki)     image="$uki_img" ;;
     esac
     _fetch_and_verify_image "$image" "$checksum_verified"
+    exec {lock_fd}>&-   # release before the (parallel-safe) build+boot
 
     cmd_build
     _log "booting $image_variant image [$mode]"

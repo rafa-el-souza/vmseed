@@ -212,11 +212,14 @@ VM:
 - **`BASE_IMAGE_DIR` is meant to be shared.** Base images are pristine and
   read-only; every guest boots from its own copy-on-write overlay that *backs
   onto* the shared base. Pointing several guests at one base dir means the image
-  is downloaded and verified once, then reused. Two caveats: the base becomes a
-  permanent backing dependency (moving or deleting it breaks every overlay built
-  on it), and there is no download lock — so seed the image **once** up front
-  with `run --download-only` before launching guests in parallel, rather than
-  racing two first-time downloads into the same file.
+  is downloaded and verified once, then reused. Parallel `run`s are safe: the
+  fetch/verify block is guarded by an `flock` on `$BASE_IMAGE_DIR/.fetch.lock`,
+  so concurrent runs queue through it instead of racing on the shared `CHECKSUM`
+  / `CHECKSUM.verified` / image files. And once an image is verified, a stamp
+  file lets later runs skip re-hashing the multi-GB base while it stays unchanged
+  (a new compose, or a changed file size/mtime, re-triggers verification). The
+  one standing caveat: the base is a permanent backing dependency — moving or
+  deleting it breaks every overlay built on it.
 - **`OVERLAY_IMAGE_DIR` can be shared too, but each guest needs its own
   `DOMAIN`.** Both the overlay (`<DOMAIN>.qcow2`) and its seed
   (`build/<DOMAIN>/…`) are keyed by `DOMAIN`, so distinct domains never collide.
