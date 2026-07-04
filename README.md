@@ -169,12 +169,17 @@ require a `--config <file>` (see [Configuration](#configuration)):
 | Command | Does |
 |---------|------|
 | `fedora-cloud.sh --config <f> build` | render the seed into `$OVERLAY_IMAGE_DIR/build/<DOMAIN>/` (+ `seed.iso` unless `SEED_METHOD=cloud-init`) |
-| `fedora-cloud.sh --config <f> boot [--fresh] <image> [MODE]` | boot an existing image under libvirt |
-| `fedora-cloud.sh --config <f> run [MODE\|--download-only]` | download + verify + build + boot, end-to-end |
+| `fedora-cloud.sh --config <f> boot [--fresh] [--replace] <image> [MODE]` | boot an existing image under libvirt |
+| `fedora-cloud.sh --config <f> run [MODE] [--replace]` / `run --download-only` | download + verify + build + boot, end-to-end |
 
 `MODE` is the VM **firmware** — `bios` (default), `uefi`, or `uefi-secure`. The
 **image** is chosen separately by `IMAGE_VARIANT` (`generic` default, or `uki`) —
 see [Image variants](#image-variants).
+
+Flags: `--fresh` recreates the qcow2 overlay from the pristine base (so cloud-init
+re-runs); `--replace` lets a boot replace a domain that is **still running** —
+without it, `boot`/`run` refuse to clobber a live guest that already owns this
+`DOMAIN` (see [Running multiple guests](#running-multiple-guests)).
 
 ## Configuration
 
@@ -224,12 +229,19 @@ VM:
   `DOMAIN`.** Both the overlay (`<DOMAIN>.qcow2`) and its seed
   (`build/<DOMAIN>/…`) are keyed by `DOMAIN`, so distinct domains never collide.
   Reusing the *same* `DOMAIN` for two guests would overwrite one's overlay and
-  seed and let `virsh undefine` tear down the sibling — so also vary
-  `VM_HOSTNAME`, `INSTANCE_ID`, and the key files per guest.
+  seed — so also vary `VM_HOSTNAME`, `INSTANCE_ID`, and the key files per guest.
+
+To catch that mistake, `boot` checks the domain's state before (re)defining it:
+if a domain with this `DOMAIN` is **already running** (a live sibling colliding
+on the name), it refuses rather than tear it down — pass `--replace` if you
+really mean to replace a running guest. A **shut-off** domain of the same name is
+treated as this guest's own prior instance and is replaced with a log line (this
+is the normal reprovision/`--fresh` loop, and needs no flag). A `DOMAIN` that
+does not exist yet — the usual new-guest case — sails straight through.
 
 In short: one config per guest, sharing `BASE_IMAGE_DIR`, each with its own
 `DOMAIN` (and ideally its own `OVERLAY_IMAGE_DIR` if you like them fully
-separated).
+separated). Then fire off `run` for all of them — in parallel is fine.
 
 ## Seed delivery
 
@@ -237,7 +249,7 @@ separated).
 
 | `SEED_METHOD` | `build` produces | `boot` attaches | Needs `cloud-localds` |
 |---------------|------------------|-----------------|-----------------------|
-| `seed-iso` (default) | a `cidata` ISO at `$OVERLAY_IMAGE_DIR/build/seed.iso` | that ISO, as a CDROM (`--disk …,device=cdrom`) | **yes**, at `build` time |
+| `seed-iso` (default) | a `cidata` ISO at `$OVERLAY_IMAGE_DIR/build/<DOMAIN>/seed.iso` | that ISO, as a CDROM (`--disk …,device=cdrom`) | **yes**, at `build` time |
 | `cloud-init` | just `user-data` + `meta-data` | via `virt-install --cloud-init` (it builds its own ISO) | no |
 
 With `seed-iso` the exact ISO you can inspect is the one that boots, and the same
@@ -429,9 +441,9 @@ with a signed initrd or confidential-computing attestation (and pair it with
    ./fedora-cloud.sh --config fedora-cloud.conf build
    ```
 
-   This renders `$OVERLAY_IMAGE_DIR/build/user-data`, validates it with
+   This renders `$OVERLAY_IMAGE_DIR/build/<DOMAIN>/user-data`, validates it with
    `cloud-init schema`, and — with the default `SEED_METHOD=seed-iso` — builds
-   `$OVERLAY_IMAGE_DIR/build/seed.iso` (see [Seed delivery](#seed-delivery)).
+   `$OVERLAY_IMAGE_DIR/build/<DOMAIN>/seed.iso` (see [Seed delivery](#seed-delivery)).
 
    > Install the tooling on Fedora with:
    > `sudo dnf install cloud-utils virt-install libvirt qemu-img edk2-ovmf`
@@ -452,9 +464,9 @@ with a signed initrd or confidential-computing attestation (and pair it with
    autoselection pick OVMF for the UEFI modes. Re-run with `--fresh` to reset the
    disk.
 
-   For cloud providers, pass `$OVERLAY_IMAGE_DIR/build/user-data` to the
+   For cloud providers, pass `$OVERLAY_IMAGE_DIR/build/<DOMAIN>/user-data` to the
    platform's user-data field instead (e.g. `openstack server create --user-data
-   …/build/user-data`, EC2 user data, ...).
+   …/build/<DOMAIN>/user-data`, EC2 user data, ...).
 
 4. Connect. With the default **`qemu:///session` + `NETWORK=user`**, the guest is
    NAT'd behind user-mode networking, so `domifaddr` won't show a routable lease —

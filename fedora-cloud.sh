@@ -7,9 +7,9 @@
 # Requires bash >= 4.3 (namerefs, associative arrays, dynamic-scope locals).
 #
 # PUBLIC API (subcommands):
-#   build                                 render keys into build/user-data (+seed.iso)
-#   boot [--fresh] <image> [MODE]         boot an existing image under libvirt
-#   run  [MODE|--download-only]           download + verify + build + boot, end-to-end
+#   build                                 render keys into build/<DOMAIN>/user-data (+seed.iso)
+#   boot [--fresh] [--replace] <image> [MODE]  boot an existing image under libvirt
+#   run  [MODE] [--replace] | --download-only  download + verify + build + boot, end-to-end
 #   help                                  show usage
 #
 #   MODE = bios | uefi | uefi-secure      (bios -> Generic image, uefi* -> UKI image)
@@ -413,10 +413,17 @@ main() {
   cmd_boot() {
     _require_config boot
     _require_overlay_dir boot
-    local fresh=0
-    if [[ "${1:-}" == "--fresh" ]]; then fresh=1; shift; fi
+    local fresh=0 replace=0
+    while [[ "${1:-}" == --* ]]; do
+      case "$1" in
+        --fresh)   fresh=1 ;;
+        --replace) replace=1 ;;
+        *) _die "unknown boot flag: $1" ;;
+      esac
+      shift
+    done
     local image="${1:-}"
-    [[ -n "$image" ]] || _die "usage: $self --config <file> boot [--fresh] <image.qcow2> [bios|uefi|uefi-secure]"
+    [[ -n "$image" ]] || _die "usage: $self --config <file> boot [--fresh] [--replace] <image.qcow2> [bios|uefi|uefi-secure]"
     local mode="${2:-bios}"
 
     _need virt-install virsh qemu-img
@@ -450,6 +457,24 @@ main() {
       tpm_args=(--tpm "backend.type=emulator,backend.version=2.0")
     fi
 
+    # Guard against clobbering a *different* guest that already owns this DOMAIN.
+    # An active domain of this name is almost always a live sibling colliding on
+    # the name, so refuse unless --replace; a shut-off domain is this guest's own
+    # prior instance, so replace it (with a note). domstate is empty when the
+    # domain does not exist — the common new-guest path — so it sails through.
+    local dom_state
+    dom_state="$(virsh --connect "$libvirt_uri" domstate "$domain" 2>/dev/null || true)"
+    if [[ -n "$dom_state" ]]; then
+      case "$dom_state" in
+        "shut off"|crashed)
+          _log "replacing existing (inactive) domain '$domain'" ;;
+        *)  # running / paused / idle / pmsuspended / in shutdown — active
+          [[ "$replace" == 1 ]] \
+            || _die "domain '$domain' is already active on $libvirt_uri (state: $dom_state) — refusing to replace a live guest. Use a distinct DOMAIN per guest, or pass --replace to force it."
+          _log "replacing active domain '$domain' (--replace)"
+          virsh --connect "$libvirt_uri" destroy "$domain" >/dev/null 2>&1 || true ;;
+      esac
+    fi
     _undefine_domain "$domain"
 
     mkdir -p "$overlay_image_dir"
@@ -484,12 +509,17 @@ main() {
     _require_config run
     _require_base_dir
     # MODE is the VM firmware; the image to fetch is IMAGE_VARIANT (independent).
-    local mode="${1:-bios}" download_only=0
-    case "$mode" in
-      --download-only)        download_only=1 ;;
-      bios|uefi|uefi-secure)  ;;
-      *) _die "usage: $self --config <file> run [bios|uefi|uefi-secure|--download-only]" ;;
-    esac
+    # --replace is forwarded to boot; --download-only skips build/boot entirely.
+    local mode="bios" download_only=0 replace=0
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --download-only)        download_only=1 ;;
+        --replace)              replace=1 ;;
+        bios|uefi|uefi-secure)  mode="$1" ;;
+        *) _die "usage: $self --config <file> run [bios|uefi|uefi-secure] [--replace] | run --download-only" ;;
+      esac
+      shift
+    done
     # The only impossible combination: the UKI image is UEFI-only. (Fail before
     # any network work.)
     if [[ "$download_only" != "1" && "$image_variant" == "uki" && "$mode" == "bios" ]]; then
@@ -546,7 +576,9 @@ main() {
 
     cmd_build
     _log "booting $image_variant image [$mode]"
-    cmd_boot "$base_image_dir/$image" "$mode"
+    local -a replace_arg=()
+    [[ "$replace" == 1 ]] && replace_arg=(--replace)
+    cmd_boot "${replace_arg[@]}" "$base_image_dir/$image" "$mode"
   }
 
   cmd_help() {
@@ -554,15 +586,20 @@ main() {
 $self — provision & boot a Fedora Cloud image with cloud-init
 
 Usage:
-  $self --config <file> build                         render SSH keys into build/user-data
-  $self --config <file> boot [--fresh] <image> [MODE] boot an existing image under libvirt
-  $self --config <file> run  [MODE|--download-only]   download + verify + build + boot
-  $self help                                          this message
+  $self --config <file> build                                   render SSH keys into build/<DOMAIN>/user-data
+  $self --config <file> boot [--fresh] [--replace] <image> [MODE] boot an existing image under libvirt
+  $self --config <file> run  [MODE] [--replace] | run --download-only  download + verify + build + boot
+  $self help                                                    this message
 
 MODE (the VM firmware — independent of the image):
   bios         legacy BIOS/SeaBIOS   [default]
   uefi         UEFI
   uefi-secure  UEFI + Secure Boot
+
+Flags:
+  --fresh      recreate the qcow2 overlay from the pristine base (re-runs cloud-init)
+  --replace    replace an existing domain even if it is running (else boot refuses
+               to clobber a live guest that already owns this DOMAIN)
 
 Image is chosen separately by IMAGE_VARIANT in the config:
   generic  Cloud Base Generic, hybrid BIOS+UEFI — works with any MODE   [default]
