@@ -52,8 +52,8 @@ main() {
   _is_known_key() {
     case "$1" in
       TEMPLATE|KEYS_DIR|STD_KEY_FILE|ADM_KEY_FILE|TMUX_CONF|BUILD_DIR|IMAGES_DIR|\
-      INSTANCE_ID|VM_HOSTNAME|DOMAIN|RAM_MB|VCPUS|LIBVIRT_URI|NETWORK|OSINFO|\
-      OVMF_CODE|VER|ARCH|FEDORA_GPG_URL|CHECKSUM_URL|COMPOSE) return 0 ;;
+      STD_USER|ADMIN_USER|INSTANCE_ID|VM_HOSTNAME|DOMAIN|RAM_MB|VCPUS|LIBVIRT_URI|\
+      NETWORK|OSINFO|OVMF_CODE|VER|ARCH|FEDORA_GPG_URL|CHECKSUM_URL|COMPOSE) return 0 ;;
       *) return 1 ;;
     esac
   }
@@ -76,6 +76,16 @@ main() {
         [[ "$val" =~ ^[a-z]+(\+[a-z]+)?:// ]] || _die "$where must be a libvirt URI (e.g. qemu:///session)" ;;
       DOMAIN|INSTANCE_ID|VM_HOSTNAME)
         [[ "$val" =~ ^[A-Za-z0-9._-]+$ ]] || _die "$where may contain only [A-Za-z0-9._-], got '$val'" ;;
+      STD_USER|ADMIN_USER)
+        [[ "$val" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] \
+          || _die "$where must be a valid Linux username (^[a-z_][a-z0-9_-]{0,31}$), got '$val'"
+        # Reserved: always-present root, the distro default user kept by
+        # `- default` (fedora), the cloud-init keyword, and common system
+        # accounts on the base image — creating any of these would collide.
+        case "$val" in
+          root|default|fedora|nobody|bin|daemon|adm|sync|shutdown|halt|mail|operator|games|ftp|sshd)
+            _die "$where '$val' is a reserved/system account; choose another name" ;;
+        esac ;;
       OSINFO)
         [[ "$val" =~ ^[A-Za-z0-9=,._:-]+$ ]] || _die "$where has invalid characters: '$val'" ;;
       NETWORK)
@@ -114,15 +124,17 @@ main() {
     esac
   }
 
-  _render_user_data() {  # _render_user_data <std_key> <adm_key> <tmux_b64>  -> user-data on stdout
+  _render_user_data() {  # _render_user_data <std_key> <adm_key> <tmux_b64> <std_user> <admin_user>
     # awk (not sed) so special chars in a value can't break substitution. The
     # replacement text is passed literally (gsub's target is a fixed string here,
     # and none of the values contain awk's '&' backreference character).
-    awk -v std="$1" -v adm="$2" -v tmux="$3" '
+    awk -v std="$1" -v adm="$2" -v tmux="$3" -v su="$4" -v au="$5" '
       {
         gsub(/PLACEHOLDER_STANDARD_KEY/, std)
         gsub(/PLACEHOLDER_ADMIN_KEY/, adm)
         gsub(/PLACEHOLDER_TMUX_CONF_B64/, tmux)
+        gsub(/PLACEHOLDER_STD_USER/, su)
+        gsub(/PLACEHOLDER_ADMIN_USER/, au)
         print
       }
     ' "$template"
@@ -194,13 +206,15 @@ main() {
         # A libvirt-managed NAT network yields a queryable lease via domifaddr.
         _log "or find its IP and SSH in:"
         printf '      virsh --connect %s domifaddr %s\n' "$libvirt_uri" "$domain" >&2
-        printf '      ssh -i keys/admin admin@<IP>   /   ssh -i keys/appuser appuser@<IP>\n' >&2 ;;
+        printf '      ssh -i %s %s@<IP>   /   ssh -i %s %s@<IP>\n' \
+          "${adm_key_file%.pub}" "$admin_user" "${std_key_file%.pub}" "$std_user" >&2 ;;
       bridge=*)
         # Bridged: lease is served by whoever owns the bridge (e.g. virbr0's dnsmasq).
         _log "or find its IP on the bridge and SSH in:"
         printf '      virsh -c qemu:///system net-dhcp-leases default   # if bridged to virbr0\n' >&2
         printf '      ip neigh show dev %s\n' "${network#bridge=}" >&2
-        printf '      ssh -i keys/admin admin@<IP>   /   ssh -i keys/appuser appuser@<IP>\n' >&2 ;;
+        printf '      ssh -i %s %s@<IP>   /   ssh -i %s %s@<IP>\n' \
+          "${adm_key_file%.pub}" "$admin_user" "${std_key_file%.pub}" "$std_user" >&2 ;;
       *)
         # User-mode networking (session default): no queryable lease.
         _note "NETWORK=$network gives no queryable lease; use the console, or a bridge/system NAT for direct SSH" ;;
@@ -264,6 +278,8 @@ main() {
   cmd_build() {
     _require_config build
     _need awk base64
+    [[ "$std_user" != "$admin_user" ]] \
+      || _die "STD_USER and ADMIN_USER must differ (both '$std_user')"
     local f
     for f in "$template" "$std_key_file" "$adm_key_file" "$tmux_conf"; do
       [[ -f "$f" ]] || _die "missing required file: $f"
@@ -278,7 +294,7 @@ main() {
     tmux_b64="$(base64 -w0 < "$tmux_conf")"
 
     mkdir -p "$build_dir"
-    _render_user_data "$std_key" "$adm_key" "$tmux_b64" > "$build_dir/user-data"
+    _render_user_data "$std_key" "$adm_key" "$tmux_b64" "$std_user" "$admin_user" > "$build_dir/user-data"
     printf 'instance-id: %s\nlocal-hostname: %s\n' "$instance_id" "$vm_hostname" > "$build_dir/meta-data"
 
     _validate_seed "$build_dir/user-data"
@@ -417,6 +433,8 @@ EOF
     [KEYS_DIR]="$script_dir/keys"
     [BUILD_DIR]="$script_dir/build"
     [IMAGES_DIR]="$script_dir/images"
+    [STD_USER]="appuser"
+    [ADMIN_USER]="admin"
     [INSTANCE_ID]="fedora-01"
     [VM_HOSTNAME]="fedora-01"
     [DOMAIN]="fedora-cloud-01"
@@ -442,13 +460,16 @@ EOF
   done
   [[ -n "$config_file" ]] && _load_config "$config_file"
 
-  # Derived defaults (respect a KEYS_DIR override from the config file).
-  : "${cfg[STD_KEY_FILE]:=${cfg[KEYS_DIR]}/appuser.pub}"
-  : "${cfg[ADM_KEY_FILE]:=${cfg[KEYS_DIR]}/admin.pub}"
+  # Derived defaults: key files follow the usernames and KEYS_DIR unless the
+  # config sets them explicitly (so STD_USER=alice looks for KEYS_DIR/alice.pub).
+  : "${cfg[STD_KEY_FILE]:=${cfg[KEYS_DIR]}/${cfg[STD_USER]}.pub}"
+  : "${cfg[ADM_KEY_FILE]:=${cfg[KEYS_DIR]}/${cfg[ADMIN_USER]}.pub}"
 
   # Project the validated config into readable locals used by the commands.
   local template="${cfg[TEMPLATE]}"
   local tmux_conf="${cfg[TMUX_CONF]}"
+  local std_user="${cfg[STD_USER]}"
+  local admin_user="${cfg[ADMIN_USER]}"
   local std_key_file="${cfg[STD_KEY_FILE]}"
   local adm_key_file="${cfg[ADM_KEY_FILE]}"
   local build_dir="${cfg[BUILD_DIR]}"

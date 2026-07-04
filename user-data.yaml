@@ -3,8 +3,8 @@
 # detect the payload format. Do not add anything before it.
 #
 # This is a TEMPLATE. The PLACEHOLDER_* tokens are replaced at build time by
-# `fedora-cloud.sh build` — the SSH public keys, and the base64-encoded
-# .tmux.conf. Do not paste keys or file contents here directly.
+# `fedora-cloud.sh build` — the two usernames (STD_USER / ADMIN_USER), the SSH
+# public keys, and the base64-encoded tmux config. Do not edit those in here.
 
 users:
   # Declaring `users:` replaces cloud-init's default user set. Keep `default`
@@ -13,7 +13,7 @@ users:
   - default
 
   # ---- Standard (unprivileged) user ----
-  - name: appuser
+  - name: PLACEHOLDER_STD_USER
     gecos: "Standard Application User"
     shell: /bin/bash
     lock_passwd: true          # no password login; SSH key only
@@ -21,7 +21,7 @@ users:
       - PLACEHOLDER_STANDARD_KEY
 
   # ---- Admin user (passwordless sudo) ----
-  - name: admin
+  - name: PLACEHOLDER_ADMIN_USER
     gecos: "Administrator"
     shell: /bin/bash
     groups: [wheel]            # 'wheel' is the sudo group on Fedora/RHEL
@@ -59,7 +59,7 @@ write_files:
       PermitEmptyPasswords no
 
       # Limit who can log in to the two provisioned users.
-      AllowUsers admin appuser
+      AllowUsers PLACEHOLDER_ADMIN_USER PLACEHOLDER_STD_USER
 
       # Reduce brute-force / idle exposure.
       MaxAuthTries 3
@@ -74,11 +74,11 @@ write_files:
       PermitTunnel no
       # Ciphers/MACs/KEX come from the system-wide crypto-policy (set below).
 
-  # appuser's tmux config — contents injected from .tmux.conf.temp at build time
-  # (base64). `defer: true` writes it in the later stage, after the user (and its
-  # home directory) exist; a plain write_files runs before users are created.
-  - path: /home/appuser/.tmux.conf
-    owner: appuser:appuser
+  # The standard user's tmux config — contents injected from TMUX_CONF at build
+  # time (base64). `defer: true` writes it in the later stage, after the user (and
+  # its home directory) exist; a plain write_files runs before users are created.
+  - path: /home/PLACEHOLDER_STD_USER/.tmux.conf
+    owner: PLACEHOLDER_STD_USER:PLACEHOLDER_STD_USER
     permissions: '0644'
     encoding: b64
     defer: true
@@ -93,14 +93,14 @@ runcmd:
   # 2) Validate the sshd drop-in and apply it. `sshd -t` fails the boot loudly
   #    if the config is broken, rather than silently locking you out.
   - [ sh, -c, "sshd -t && systemctl reload sshd" ]
-  # 3) Per-user setup for appuser only, run as appuser with a login shell so
-  #    HOME and ~ resolve to /home/appuser. git and tmux come from `packages`
+  # 3) Per-user setup for the standard user only, run as that user with a login
+  #    shell so HOME and ~ resolve to its home. git and tmux come from `packages`
   #    above, which the package module installs before runcmd runs.
-  - [ runuser, -l, appuser, -c, "curl -fsSL https://claude.ai/install.sh | bash" ]
-  - [ runuser, -l, appuser, -c, "git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm" ]
-  - [ runuser, -l, appuser, -c, "git clone -b v2.3.0 https://github.com/catppuccin/tmux.git ~/.config/tmux/plugins/catppuccin/tmux" ]
+  - [ runuser, -l, PLACEHOLDER_STD_USER, -c, "curl -fsSL https://claude.ai/install.sh | bash" ]
+  - [ runuser, -l, PLACEHOLDER_STD_USER, -c, "git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm" ]
+  - [ runuser, -l, PLACEHOLDER_STD_USER, -c, "git clone -b v2.3.0 https://github.com/catppuccin/tmux.git ~/.config/tmux/plugins/catppuccin/tmux" ]
   # Install the @plugin list from ~/.tmux.conf so tmux is ready on first use
   # (no interactive `prefix + I` needed). tpm's headless installer starts a
   # server to read the config, then git-clones each plugin into ~/.tmux/plugins.
   # Runs last: catppuccin (above) is `run` by the config and must exist first.
-  - [ runuser, -l, appuser, -c, "~/.tmux/plugins/tpm/bin/install_plugins" ]
+  - [ runuser, -l, PLACEHOLDER_STD_USER, -c, "~/.tmux/plugins/tpm/bin/install_plugins" ]

@@ -3,13 +3,17 @@
 Provisions a [Fedora Cloud Base](https://fedoraproject.org/cloud/download) image
 on first boot with two SSH-only users:
 
-| User      | Privileges                          | Group   |
-|-----------|-------------------------------------|---------|
-| `appuser` | Standard, no sudo                   | —       |
-| `admin`   | Passwordless sudo (`NOPASSWD:ALL`)  | `wheel` |
+| User      | Privileges                          | Group   | Config key   |
+|-----------|-------------------------------------|---------|--------------|
+| `appuser` | Standard, no sudo                   | —       | `STD_USER`   |
+| `admin`   | Passwordless sudo (`NOPASSWD:ALL`)  | `wheel` | `ADMIN_USER` |
 
-Each user gets a public key loaded from a file in `keys/`. Password login is
-disabled (`lock_passwd: true`) — SSH key authentication only.
+The usernames shown are the **defaults** — set `STD_USER` / `ADMIN_USER` in your
+config to rename them. They must be valid Linux names, must differ from each
+other, and can't be a reserved/system account (`root`, `fedora`, `default`,
+`nobody`, …) — the build rejects any of these. Each user gets a public key
+loaded from `keys/<username>.pub` (override with `STD_KEY_FILE` / `ADM_KEY_FILE`).
+Password login is disabled (`lock_passwd: true`) — SSH key authentication only.
 
 ## What gets provisioned
 
@@ -18,14 +22,14 @@ On first boot, cloud-init also:
 - **Upgrades the system** (`package_update` + `package_upgrade`).
 - **Installs global tools**: `tmux`, `gh`, `git`, `btop` (dnf is idempotent, so
   anything already present is skipped).
-- **Sets up `appuser` only** (run as that user via `runuser -l`):
+- **Sets up the standard user (`STD_USER`) only** (run as that user via `runuser -l`):
   - [Claude Code](https://claude.ai) via `curl -fsSL https://claude.ai/install.sh | bash`
   - tmux TPM plugin manager → `~/.tmux/plugins/tpm`
   - tmux Catppuccin theme (v2.3.0) → `~/.config/tmux/plugins/catppuccin/tmux`
   - all `@plugin`s from `~/.tmux.conf` installed headlessly via
     `tpm/bin/install_plugins`, so **tmux is ready on first launch** (no
     interactive `prefix + I`)
-- **Writes `appuser`'s `~/.tmux.conf`** from a build-time file (see below).
+- **Writes the standard user's `~/.tmux.conf`** from a build-time file (see below).
 
 ### appuser's tmux config (`TMUX_CONF`)
 
@@ -52,7 +56,7 @@ defaults without editing the main config. It sets:
 | `PermitRootLogin` | `no` | no direct root SSH |
 | `PasswordAuthentication` / `KbdInteractiveAuthentication` | `no` | key-only auth |
 | `PermitEmptyPasswords` | `no` | reject blank passwords |
-| `AllowUsers` | `admin appuser` | only the provisioned users may log in |
+| `AllowUsers` | `<ADMIN_USER> <STD_USER>` | only the two provisioned users may log in |
 | `MaxAuthTries` | `3` | fewer brute-force attempts per connection |
 | `LoginGraceTime` | `20` | close unauthenticated sessions fast |
 | `ClientAliveInterval` / `ClientAliveCountMax` | `300` / `2` | drop idle sessions |
@@ -70,7 +74,8 @@ instead of locking you out.
 > broader compatibility, change the `runcmd` to
 > `update-crypto-policies --set DEFAULT:NO-SHA1`.
 >
-> If you rename the users, update `AllowUsers` to match or you'll be locked out.
+> `AllowUsers` is generated from `STD_USER`/`ADMIN_USER` at build time, so it
+> always matches the provisioned users — no manual edit needed when you rename.
 
 ## Layout
 
@@ -109,8 +114,9 @@ The file is **parsed, never sourced** (so a config file cannot execute code), an
 every value is **strictly validated** — unknown keys, malformed lines, and
 out-of-range values are rejected with a `config:<line>` error. Any key you omit
 keeps its built-in default. Recognised keys are documented in the sample; the
-common ones: `DOMAIN`, `RAM_MB`, `VCPUS`, `LIBVIRT_URI`, `VER`, `ARCH`,
-`OVMF_CODE`, and `COMPOSE` / `CHECKSUM_URL` (to pin a download).
+common ones: `STD_USER` / `ADMIN_USER` (the two usernames), `DOMAIN`, `RAM_MB`,
+`VCPUS`, `LIBVIRT_URI`, `VER`, `ARCH`, `OVMF_CODE`, and `COMPOSE` /
+`CHECKSUM_URL` (to pin a download).
 
 Your personal `fedora-cloud.conf` is git-ignored; only the `.example` is tracked.
 
@@ -336,7 +342,7 @@ routable IP, switch to a system NAT setup — set `LIBVIRT_URI=qemu:///system` a
 
 **SSH: `Permission denied (publickey)`.**
 - You're connecting with the wrong key — use `-i keys/admin` / `-i keys/appuser` matching the `.pub` you built with.
-- `AllowUsers` only permits `admin` and `appuser`; a renamed user is rejected. Check the sshd drop-in.
+- `AllowUsers` only permits the two provisioned users (`STD_USER`/`ADMIN_USER`); any other account is rejected. Check the sshd drop-in.
 - cloud-init may not have finished. On the console: `cloud-init status --long` should read `done`; check `/var/log/cloud-init-output.log`.
 
 **UKI image fails on the very first boot.**

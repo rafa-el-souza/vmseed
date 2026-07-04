@@ -9,8 +9,12 @@
 # TEMPLATE=./user-data.yaml            # cloud-config template
 # TMUX_CONF=./dotfiles/tmux.conf       # tmux config injected into appuser's ~/.tmux.conf
 # KEYS_DIR=./keys                      # where the *.pub files live
-# STD_KEY_FILE=./keys/appuser.pub      # defaults to KEYS_DIR/appuser.pub
-# ADM_KEY_FILE=./keys/admin.pub        # defaults to KEYS_DIR/admin.pub
+# STD_USER=appuser                     # standard (no-sudo) username; valid Linux name
+# ADMIN_USER=admin                     # admin (wheel, passwordless sudo) username
+#                                      # must differ from each other, and must not be a
+#                                      # reserved/system account (root, fedora, default, ...)
+# STD_KEY_FILE=./keys/appuser.pub      # defaults to KEYS_DIR/<STD_USER>.pub
+# ADM_KEY_FILE=./keys/admin.pub        # defaults to KEYS_DIR/<ADMIN_USER>.pub
 # BUILD_DIR=./build                    # generated seed + overlay
 # IMAGES_DIR=./images                  # downloaded images + CHECKSUM + keyring
 # INSTANCE_ID=fedora-01                # cloud-init instance-id  [A-Za-z0-9._-]
