@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 #
 # fedora-cloud.sh — provision a Fedora Cloud image with cloud-init and boot it
-# under libvirt. Two SSH-only users (standard + admin), hardened sshd, verified
-# image downloads. Covers both the traditional (BIOS) and UKI (UEFI) variants.
+# under libvirt.
 #
 # Requires bash >= 4.3 (namerefs, associative arrays, dynamic-scope locals).
 #
@@ -20,11 +19,7 @@
 #                     fedora-cloud.conf.example for the recognised keys.
 #
 # Configuration comes only from the --config file (no environment variables).
-# The file is parsed, never sourced, and every value is strictly validated.
-#
-# Everything below lives inside main(): there are no global variables — the
-# nested cmd_*/_* functions read main's locals via bash dynamic scoping.
-# Naming: cmd_*  = public commands,  _*  = private helpers.
+
 set -euo pipefail
 
 main() {
@@ -32,7 +27,7 @@ main() {
   local script_dir; script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
   # ===================== PRIVATE API (helpers) =====================
-  # Diagnostics go to stderr so a function's stdout is only its return value.
+
   _log()  { printf '==> %s\n' "$*" >&2; }
   _note() { printf 'note: %s\n' "$*" >&2; }
   _die()  { printf 'error: %s\n' "$*" >&2; exit 1; }
