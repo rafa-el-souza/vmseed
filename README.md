@@ -477,14 +477,21 @@ with a signed initrd or confidential-computing attestation (and pair it with
    ```
 
    For direct SSH by IP, run on the **system** libvirt with a managed NAT network —
-   set `LIBVIRT_URI=qemu:///system` and `NETWORK=network=default` in your config,
-   then:
+   set `LIBVIRT_URI=qemu:///system` and `NETWORK=network=default` in your config.
+   On a queryable network (`network=…` NAT or `bridge=…`), `boot` waits up to 30s
+   for the guest to obtain a lease and, when it gets one, prints **ready-to-run
+   ssh lines with the resolved IP** — e.g.:
 
-   ```bash
-   virsh -c qemu:///system domifaddr fedora-cloud-01
-   ssh -i ~/.ssh/admin-fedora-cloud-01   admin@<IP>
-   ssh -i ~/.ssh/appuser-fedora-cloud-01 appuser@<IP>
+   ```text
+   ==> or SSH straight in (IP 192.168.122.42):
+         ssh -i ~/.ssh/admin-fedora-cloud-01   admin@192.168.122.42
+         ssh -i ~/.ssh/appuser-fedora-cloud-01 appuser@192.168.122.42
    ```
+
+   If no lease appears in time (the guest may still be booting), it falls back to
+   printing the `domifaddr`/`net-dhcp-leases` discovery command and the ssh lines
+   with an `<IP>` placeholder. User-mode `NETWORK=user` has no lease to query, so
+   it just points you at the serial console.
 
 ## Verify on the guest
 

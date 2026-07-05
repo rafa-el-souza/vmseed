@@ -262,28 +262,64 @@ main() {
     fi
   }
 
+  _guest_ipv4() {  # best-effort: echo the guest's first IPv4 (no /prefix), or nothing
+    local source="$1"
+    virsh --connect "$libvirt_uri" domifaddr "$domain" --source "$source" 2>/dev/null \
+      | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]+' | head -1 | cut -d/ -f1
+  }
+
+  _wait_guest_ip() {  # poll domifaddr up to ~30s for a lease; echo the IP or nothing
+    local source="$1" ip i
+    for ((i = 0; i < 30; i++)); do
+      ip="$(_guest_ipv4 "$source" || true)"
+      [[ -n "$ip" ]] && { printf '%s\n' "$ip"; return 0; }
+      sleep 1
+    done
+    return 1
+  }
+
+  _ssh_hint() {  # print a ready-to-run ssh line per user to <host> (an IP or '<IP>')
+    local host="$1"
+    printf '      ssh -i %s %s@%s\n' "${adm_key_file%.pub}" "$admin_user" "$host" >&2
+    printf '      ssh -i %s %s@%s\n' "${std_key_file%.pub}" "$std_user"   "$host" >&2
+  }
+
   _print_connect_help() {
     printf '\n' >&2
     _log "booted. Reach the guest on the serial console:"
     printf '      virsh --connect %s console %s   (Ctrl+] to exit)\n' "$libvirt_uri" "$domain" >&2
+
+    # Try to resolve a real IP so the ssh lines are copy-paste ready. Only NAT
+    # (lease) and bridged (host ARP table) networks are queryable; user-mode has
+    # no lease at all.
+    local ip="" source=""
     case "$network" in
-      network=*)
-        # A libvirt-managed NAT network yields a queryable lease via domifaddr.
-        _log "or find its IP and SSH in:"
-        printf '      virsh --connect %s domifaddr %s\n' "$libvirt_uri" "$domain" >&2
-        printf '      ssh -i %s %s@<IP>   /   ssh -i %s %s@<IP>\n' \
-          "${adm_key_file%.pub}" "$admin_user" "${std_key_file%.pub}" "$std_user" >&2 ;;
-      bridge=*)
-        # Bridged: lease is served by whoever owns the bridge (e.g. virbr0's dnsmasq).
-        _log "or find its IP on the bridge and SSH in:"
-        printf '      virsh -c qemu:///system net-dhcp-leases default   # if bridged to virbr0\n' >&2
-        printf '      ip neigh show dev %s\n' "${network#bridge=}" >&2
-        printf '      ssh -i %s %s@<IP>   /   ssh -i %s %s@<IP>\n' \
-          "${adm_key_file%.pub}" "$admin_user" "${std_key_file%.pub}" "$std_user" >&2 ;;
+      network=*) source="lease" ;;
+      bridge=*)  source="arp" ;;
       *)
-        # User-mode networking (session default): no queryable lease.
-        _note "NETWORK=$network gives no queryable lease; use the console, or a bridge/system NAT for direct SSH" ;;
+        _note "NETWORK=$network gives no queryable lease; use the console, or a bridge/system NAT for direct SSH"
+        return 0 ;;
     esac
+
+    _log "waiting up to 30s for the guest to obtain an IP..."
+    ip="$(_wait_guest_ip "$source" || true)"
+
+    if [[ -n "$ip" ]]; then
+      _log "or SSH straight in (IP $ip):"
+      _ssh_hint "$ip"
+      return 0
+    fi
+
+    # No lease yet (the guest may still be booting) — fall back to the discovery
+    # command for this network mode, then the ssh lines with an <IP> placeholder.
+    _log "no lease yet — find the IP once it boots, then SSH in:"
+    case "$network" in
+      network=*) printf '      virsh --connect %s domifaddr %s\n' "$libvirt_uri" "$domain" >&2 ;;
+      bridge=*)
+        printf '      virsh -c qemu:///system net-dhcp-leases default   # if bridged to virbr0\n' >&2
+        printf '      ip neigh show dev %s\n' "${network#bridge=}" >&2 ;;
+    esac
+    _ssh_hint '<IP>'
   }
 
   # ---- download / verification helpers ----
