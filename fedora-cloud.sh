@@ -390,6 +390,9 @@ main() {
 
     _log "verifying SHA-256 of $img"
     local line
+    # shellcheck disable=SC2015  # || true is a deliberate fallback, not an else:
+    # grep exits 1 on no match and the substitution must not trip `set -e`; the
+    # actual verdict is the [[ ]] test below.
     line="$( cd "$base_image_dir" \
       && sha256sum -c --ignore-missing "$(basename "$checksum_file")" 2>/dev/null \
       | grep -E "^${img}:" || true )"
