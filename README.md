@@ -1,5 +1,7 @@
 # Fedora Cloud provisioning with cloud-init
 
+[![CI](https://github.com/rafa-el-souza/vmseed/actions/workflows/ci.yml/badge.svg)](https://github.com/rafa-el-souza/vmseed/actions/workflows/ci.yml)
+
 Provisions a [Fedora Cloud Base](https://fedoraproject.org/cloud/download) image
 on first boot with two SSH-only users:
 
