@@ -59,7 +59,8 @@ main() {
       TEMPLATE|KEYS_DIR|STD_KEY_FILE|ADM_KEY_FILE|TMUX_CONF|OVERLAY_IMAGE_DIR|\
       BASE_IMAGE_DIR|STD_USER|ADMIN_USER|GENERATE_KEYS|ENCRYPT_KEYS|SEED_METHOD|\
       CRYPTO_POLICY|INSTANCE_ID|VM_HOSTNAME|DOMAIN|RAM_MB|VCPUS|LIBVIRT_URI|NETWORK|OSINFO|\
-      OVMF_CODE|NVRAM_PATH|TPM|IMAGE_VARIANT|VER|ARCH|FEDORA_GPG_URL|CHECKSUM_URL|COMPOSE) return 0 ;;
+      OVMF_CODE|NVRAM_PATH|TPM|IMAGE_VARIANT|VER|ARCH|FEDORA_GPG_URL|CHECKSUM_URL|COMPOSE|\
+      FIREWALL|SAMBA|FAIL2BAN|SMB_HOST_ADDR|SMB_PASSWORD_FILE|FAIL2BAN_IGNOREIP) return 0 ;;
       *) return 1 ;;
     esac
   }
@@ -82,8 +83,20 @@ main() {
         [[ "$val" =~ ^[a-z]+(\+[a-z]+)?:// ]] || _die "$where must be a libvirt URI (e.g. qemu:///session)" ;;
       DOMAIN|INSTANCE_ID|VM_HOSTNAME)
         [[ "$val" =~ ^[A-Za-z0-9._-]+$ ]] || _die "$where may contain only [A-Za-z0-9._-], got '$val'" ;;
-      GENERATE_KEYS|ENCRYPT_KEYS|TPM)
+      GENERATE_KEYS|ENCRYPT_KEYS|TPM|FIREWALL|SAMBA|FAIL2BAN)
         [[ "$val" =~ ^(yes|no)$ ]] || _die "$where must be 'yes' or 'no', got '$val'" ;;
+      SMB_HOST_ADDR)
+        # A single IPv4 literal (the host's address on the libvirt bridge). The
+        # firewalld zone scopes it to /32 and smb.conf's `hosts allow` takes it
+        # bare, so a CIDR here would be wrong in one of the two places.
+        [[ "$val" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] \
+          || _die "$where must be a bare IPv4 address (e.g. 192.168.122.1), got '$val'" ;;
+      FAIL2BAN_IGNOREIP)
+        # A space-separated allowlist of IPs/CIDRs passed straight to fail2ban.
+        # Keep it to the characters fail2ban accepts; anything else is a typo that
+        # would otherwise surface as a jail that silently bans the operator.
+        [[ "$val" =~ ^[0-9a-fA-F.:/[:space:]]+$ ]] \
+          || _die "$where must be space-separated IPs/CIDRs, got '$val'" ;;
       SEED_METHOD)
         [[ "$val" =~ ^(seed-iso|cloud-init)$ ]] || _die "$where must be 'seed-iso' or 'cloud-init', got '$val'" ;;
       IMAGE_VARIANT)
@@ -106,7 +119,7 @@ main() {
         [[ "$val" =~ ^[A-Za-z0-9=,._:-]+$ ]] || _die "$where has invalid characters: '$val'" ;;
       NETWORK)
         [[ "$val" =~ ^[A-Za-z0-9=,._:/-]+$ ]] || _die "$where has invalid characters: '$val'" ;;
-      TEMPLATE|KEYS_DIR|STD_KEY_FILE|ADM_KEY_FILE|TMUX_CONF|OVERLAY_IMAGE_DIR|BASE_IMAGE_DIR|OVMF_CODE|NVRAM_PATH)
+      TEMPLATE|KEYS_DIR|STD_KEY_FILE|ADM_KEY_FILE|TMUX_CONF|OVERLAY_IMAGE_DIR|BASE_IMAGE_DIR|OVMF_CODE|NVRAM_PATH|SMB_PASSWORD_FILE)
         [[ "$val" != *[[:space:]]* ]] || _die "$where (a path) must not contain whitespace" ;;
     esac
   }
@@ -174,11 +187,81 @@ main() {
     [[ -f "$pub" ]] || _die "failed to create $pub"
   }
 
-  _render_user_data() {  # <std_key> <adm_key> <tmux_b64> <std_user> <admin_user> <crypto_policy>
+  _ensure_smb_password() {  # -> echoes the SMB password; creates the cred file if absent
+    # The file is written in mount.cifs's `credentials=` format, so the very file
+    # this generates is the one the host mounts with — no copying a secret around.
+    #
+    # Why the password is generated on the HOST and injected into the seed: the
+    # host is the only client, so it has to hold this credential to mount at all.
+    # The secret therefore already lives on the host, and putting it in the seed
+    # crosses no new trust boundary. Generating it on the guest instead would force
+    # a manual round-trip (SSH in, read it, write it here) before the share works,
+    # which defeats a non-interactive provision. The cost is real and stated in the
+    # README: the plaintext is in the seed ISO and in the guest's
+    # /var/lib/cloud/instance/user-data.txt (0600 root) for the life of the guest.
+    local file="$1" pw
+    if [[ -f "$file" ]]; then
+      pw="$(awk -F= '$1 == "password" { sub(/^password=/, ""); print; exit }' "$file")"
+      [[ -n "$pw" ]] || _die "no 'password=' line in $file — delete it to regenerate"
+      printf '%s\n' "$pw"
+      return 0
+    fi
+    _need base64
+    # 24 random bytes -> base64 -> keep only the alphanumerics. Done with a single
+    # `head -c` (not `... | head -c`) so nothing gets SIGPIPE'd under `pipefail`,
+    # and reduced to [A-Za-z0-9] so the value is safe in awk's gsub replacement
+    # (no '&'), in YAML, and on a shell line.
+    local raw; raw="$(head -c 24 /dev/urandom | base64 -w0)"
+    pw="${raw//[^A-Za-z0-9]/}"
+    [[ "${#pw}" -ge 16 ]] || _die "failed to generate an SMB password"
+    local dir; dir="$(dirname "$file")"
+    mkdir -p "$dir" && chmod 700 "$dir"
+    # Create empty with 0600 BEFORE writing, so the secret is never briefly
+    # world-readable between creat() and chmod.
+    ( umask 077; : > "$file" )
+    printf 'username=%s\npassword=%s\ndomain=WORKGROUP\n' "$std_user" "$pw" > "$file"
+    _log "generated an SMB password -> $file (mount with -o credentials=$file)"
+    printf '%s\n' "$pw"
+  }
+
+  _render_user_data() {  # <std_key> <adm_key> <tmux_b64> <smb_pass> <feats>
+    # Two passes in one: drop the blocks whose feature is off, then substitute the
+    # PLACEHOLDER_* tokens in what survives.
+    #
+    # `feats` is the comma-wrapped list of ENABLED features (",SAMBA,FIREWALL,").
+    # A `#@if A,B` block needs every named feature to be in it. Blocks nest: the
+    # stack is just a depth counter plus the depth at which skipping began.
+    #
     # awk (not sed) so special chars in a value can't break substitution. The
-    # replacement text is passed literally (gsub's target is a fixed string here,
-    # and none of the values contain awk's '&' backreference character).
-    awk -v std="$1" -v adm="$2" -v tmux="$3" -v su="$4" -v au="$5" -v crypto="$6" '
+    # replacement text is passed literally — gsub's target is a fixed string here,
+    # and no value can contain awk's '&' backreference character (the SSH keys and
+    # the tmux base64 are base64 alphabets; the password is generated alphanumeric;
+    # the rest are validated by _validate_value).
+    awk -v std="$1" -v adm="$2" -v tmux="$3" -v smbpass="$4" -v feats="$5" \
+        -v su="$std_user" -v au="$admin_user" -v crypto="$crypto_policy" \
+        -v smbhost="$smb_host_addr" -v f2bignore="$fail2ban_ignoreip" '
+      function on(cond,   n, i, part) {   # every feature in "A,B" must be enabled
+        n = split(cond, part, ",")
+        for (i = 1; i <= n; i++)
+          if (index(feats, "," part[i] ",") == 0) return 0
+        return 1
+      }
+      /^[[:space:]]*#@if[[:space:]]/ {
+        depth++
+        cond = $0
+        sub(/^[[:space:]]*#@if[[:space:]]+/, "", cond)
+        sub(/[[:space:]]+$/, "", cond)
+        # Only the OUTERMOST failing block decides; nested ifs inside a skipped
+        # block are irrelevant (skipdepth is already set and stays set).
+        if (skipdepth == 0 && !on(cond)) skipdepth = depth
+        next
+      }
+      /^[[:space:]]*#@endif[[:space:]]*$/ {
+        if (skipdepth == depth) skipdepth = 0
+        depth--
+        next
+      }
+      skipdepth != 0 { next }
       {
         gsub(/PLACEHOLDER_STANDARD_KEY/, std)
         gsub(/PLACEHOLDER_ADMIN_KEY/, adm)
@@ -186,7 +269,16 @@ main() {
         gsub(/PLACEHOLDER_STD_USER/, su)
         gsub(/PLACEHOLDER_ADMIN_USER/, au)
         gsub(/PLACEHOLDER_CRYPTO_POLICY/, crypto)
+        gsub(/PLACEHOLDER_SMB_PASSWORD/, smbpass)
+        gsub(/PLACEHOLDER_SMB_HOST_ADDR/, smbhost)
+        gsub(/PLACEHOLDER_F2B_IGNOREIP/, f2bignore)
         print
+      }
+      END {
+        if (depth != 0) {
+          print "template: unbalanced #@if / #@endif" > "/dev/stderr"
+          exit 1
+        }
       }
     ' "$template"
   }
@@ -204,7 +296,10 @@ main() {
   _build_seed_iso() {  # build the NoCloud cidata ISO (caller has ensured cloud-localds)
     local dir="$1"
     _log "building seed.iso"
-    cloud-localds "$dir/seed.iso" "$dir/user-data" "$dir/meta-data"
+    # umask, not a post-hoc chmod: with SAMBA=yes the ISO contains the SMB password,
+    # and a chmod after the fact leaves a window where it is world-readable. qemu
+    # runs as this same user under qemu:///session, so 0600 is enough for it to boot.
+    ( umask 077; cloud-localds "$dir/seed.iso" "$dir/user-data" "$dir/meta-data" )
   }
 
   # ---- boot helpers ----
@@ -284,6 +379,23 @@ main() {
     printf '      ssh -i %s %s@%s\n' "${std_key_file%.pub}" "$std_user"   "$host" >&2
   }
 
+  _mount_hint() {  # print the host-side cifs mount for the projects share
+    [[ "$samba" == "yes" ]] || return 0
+    local host="$1"
+    printf '\n' >&2
+    _log "mount the guest's ~/projects on this host (needs cifs-utils):"
+    # `seal` is not optional: smb.conf sets `server smb encrypt = required`, so an
+    # unencrypted session is refused. uid/gid map the files to the invoking user —
+    # SMB3 carries no POSIX ownership.
+    printf '      sudo mount -t cifs //%s/projects /mnt/projects \\\n' "$host" >&2
+    # shellcheck disable=SC2016  # $(id -u)/$(id -g) must reach the operator's terminal
+    # UNexpanded — this is a line for them to copy and run, not one we evaluate. (We
+    # run as them, but under sudo the mount's uid= must still resolve to their id.)
+    printf '        -o credentials=%s,vers=3.1.1,seal,uid=$(id -u),gid=$(id -g),forceuid,forcegid,nosuid,nodev\n' \
+      "$smb_password_file" >&2
+    _note "the guest only accepts SMB from SMB_HOST_ADDR ($smb_host_addr) — if this host is not that address on the bridge, the mount will hang"
+  }
+
   _print_connect_help() {
     printf '\n' >&2
     _log "booted. Reach the guest on the serial console:"
@@ -307,6 +419,7 @@ main() {
     if [[ -n "$ip" ]]; then
       _log "or SSH straight in (IP $ip):"
       _ssh_hint "$ip"
+      _mount_hint "$ip"
       return 0
     fi
 
@@ -320,6 +433,7 @@ main() {
         printf '      ip neigh show dev %s\n' "${network#bridge=}" >&2 ;;
     esac
     _ssh_hint '<IP>'
+    _mount_hint '<IP>'
   }
 
   # ---- download / verification helpers ----
@@ -413,6 +527,24 @@ main() {
     for f in "$template" "$tmux_conf"; do
       [[ -f "$f" ]] || _die "missing required file: $f"
     done
+
+    # ---- Samba prerequisites. Fail here, at build, rather than shipping a guest
+    # that boots an smbd nobody can reach.
+    if [[ "$samba" == "yes" ]]; then
+      # The host has to be able to open a TCP connection TO the guest. NETWORK=user
+      # (QEMU's user-mode/slirp stack) gives the guest no routable address at all —
+      # it sits behind a userspace proxy and the host cannot initiate anything to
+      # it. No firewall rule or smb.conf setting can fix that.
+      case "$network" in
+        bridge=*|network=*) ;;
+        *) _die "SAMBA=yes needs a network the host can reach: NETWORK=$network gives the guest no routable address (QEMU user-mode). Use NETWORK=bridge=virbr0 (see README), or network=default with LIBVIRT_URI=qemu:///system." ;;
+      esac
+      # Without firewalld the share is reachable by every other guest on the
+      # bridge, not just the host. The Cloud image ships no packet filter at all,
+      # so this is not a hypothetical.
+      [[ "$firewall" == "yes" ]] \
+        || _die "SAMBA=yes requires FIREWALL=yes — otherwise port 445 is open to every host on the bridged network, not just SMB_HOST_ADDR ($smb_host_addr)"
+    fi
     # SSH keys: use the files if present. If absent, GENERATE_KEYS=no fails;
     # GENERATE_KEYS=yes (default) creates them — ENCRYPT_KEYS=yes prompts for a
     # passphrase (once per key), ENCRYPT_KEYS=no makes it non-interactive.
@@ -427,11 +559,25 @@ main() {
     # template) so multi-line content can't break YAML indentation.
     tmux_b64="$(base64 -w0 < "$tmux_conf")"
 
+    # The comma-wrapped list of enabled features drives the template's #@if blocks.
+    local feats=","
+    [[ "$firewall" == "yes" ]] && feats+="FIREWALL,"
+    [[ "$samba"    == "yes" ]] && feats+="SAMBA,"
+    [[ "$fail2ban" == "yes" ]] && feats+="FAIL2BAN,"
+
+    # Only reachable when SAMBA=yes; otherwise the placeholder is stripped with its
+    # block and the seed never sees a password.
+    local smb_pass=""
+    [[ "$samba" == "yes" ]] && smb_pass="$(_ensure_smb_password "$smb_password_file")"
+
     # Seed artifacts live in a per-domain build/ subdir so several guests can
     # share one OVERLAY_IMAGE_DIR without clobbering each other's cloud-config.
     local seed_dir="$overlay_image_dir/build/$domain"
     mkdir -p "$seed_dir"
-    _render_user_data "$std_key" "$adm_key" "$tmux_b64" "$std_user" "$admin_user" "$crypto_policy" > "$seed_dir/user-data"
+    # 0600 from the start: with SAMBA=yes the rendered user-data carries the SMB
+    # password, so it must never exist world-readable, not even briefly.
+    ( umask 077; : > "$seed_dir/user-data" )
+    _render_user_data "$std_key" "$adm_key" "$tmux_b64" "$smb_pass" "$feats" > "$seed_dir/user-data"
     printf 'instance-id: %s\nlocal-hostname: %s\n' "$instance_id" "$vm_hostname" > "$seed_dir/meta-data"
 
     _validate_seed "$seed_dir/user-data"
@@ -670,6 +816,16 @@ EOF
     [CRYPTO_POLICY]="DEFAULT:NO-SHA1"
     [INSTANCE_ID]="fedora-01"
     [VM_HOSTNAME]="fedora-01"
+    # Security features. FIREWALL defaults ON because the Fedora Cloud Base image
+    # ships with NO packet filter at all — this closes a real hole and costs
+    # nothing (firewalld's default `public` zone already permits SSH). SAMBA and
+    # FAIL2BAN default OFF: both have prerequisites (a reachable network; a
+    # password) and neither should appear on a guest that did not ask for it.
+    [FIREWALL]="yes"
+    [SAMBA]="no"
+    [FAIL2BAN]="no"
+    [SMB_HOST_ADDR]="192.168.122.1"
+    [FAIL2BAN_IGNOREIP]="127.0.0.1/8 ::1 192.168.122.0/24"
     [DOMAIN]="fedora-cloud-01"
     [RAM_MB]="2048"
     [VCPUS]="2"
@@ -700,6 +856,9 @@ EOF
   # (e.g. STD_USER=alice, DOMAIN=web01 -> KEYS_DIR/alice-web01.pub).
   : "${cfg[STD_KEY_FILE]:=${cfg[KEYS_DIR]}/${cfg[STD_USER]}-${cfg[DOMAIN]}.pub}"
   : "${cfg[ADM_KEY_FILE]:=${cfg[KEYS_DIR]}/${cfg[ADMIN_USER]}-${cfg[DOMAIN]}.pub}"
+  # Same per-VM naming for the SMB credentials file, for the same reason: so two
+  # domains don't share one secret.
+  : "${cfg[SMB_PASSWORD_FILE]:=${cfg[KEYS_DIR]}/smb-${cfg[STD_USER]}-${cfg[DOMAIN]}.cred}"
 
   # Project the validated config into readable locals used by the commands.
   local template="${cfg[TEMPLATE]}"
@@ -712,6 +871,12 @@ EOF
   local seed_method="${cfg[SEED_METHOD]}"
   local std_key_file="${cfg[STD_KEY_FILE]}"
   local adm_key_file="${cfg[ADM_KEY_FILE]}"
+  local firewall="${cfg[FIREWALL]}"
+  local samba="${cfg[SAMBA]}"
+  local fail2ban="${cfg[FAIL2BAN]}"
+  local smb_host_addr="${cfg[SMB_HOST_ADDR]}"
+  local smb_password_file="${cfg[SMB_PASSWORD_FILE]}"
+  local fail2ban_ignoreip="${cfg[FAIL2BAN_IGNOREIP]}"
   # Required (no default); presence is enforced per-command by _require_* below.
   local overlay_image_dir="${cfg[OVERLAY_IMAGE_DIR]:-}"
   local base_image_dir="${cfg[BASE_IMAGE_DIR]:-}"
