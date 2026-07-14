@@ -88,8 +88,11 @@ main() {
       SMB_HOST_ADDR)
         # A single IPv4 literal (the host's address on the libvirt bridge). The
         # firewalld zone scopes it to /32 and smb.conf's `hosts allow` takes it
-        # bare, so a CIDR here would be wrong in one of the two places.
-        [[ "$val" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] \
+        # bare, so a CIDR here would be wrong in one of the two places. Octets are
+        # range-checked: a loose \d{1,3} would wave 999.1.1.1 through to firewalld,
+        # which then fails at boot instead of here.
+        local o='(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])'
+        [[ "$val" =~ ^${o}\.${o}\.${o}\.${o}$ ]] \
           || _die "$where must be a bare IPv4 address (e.g. 192.168.122.1), got '$val'" ;;
       FAIL2BAN_IGNOREIP)
         # A space-separated allowlist of IPs/CIDRs passed straight to fail2ban.

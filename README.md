@@ -288,6 +288,25 @@ virsh --connect qemu:///session console <DOMAIN>   # Ctrl+] to exit
 sudo fail2ban-client unban --all
 ```
 
+## Tests
+
+A [bats](https://github.com/bats-core/bats-core) suite (135 tests) runs the CLI as
+a subprocess: it renders seeds, generates keys, and asserts on the exact argv the
+script *would* hand to `virt-install` (libvirt, QEMU and the network are stubbed).
+
+```bash
+tests/run.sh                 # whole suite
+tests/run.sh --filter samba  # just the Samba tests (any bats arg works)
+```
+
+It needs only `bats` on `PATH` (`dnf install bats`, `apt-get install bats`, or
+[bats-core](https://github.com/bats-core/bats-core)). The suite is self-contained
+— each test works inside its own temp dir and stubs out anything external, so it
+never mutates the host or reaches the network. Install `cloud-init` as well and the
+two schema tests validate the rendered seed for real instead of self-skipping.
+
+The suite is wired into CI as the `test` job, alongside `lint`.
+
 ## Layout
 
 The repo itself only holds the tool and its inputs:

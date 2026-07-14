@@ -14,3 +14,17 @@ jobs:
         run: bash -n fedora-cloud.sh
       - name: ShellCheck
         run: shellcheck fedora-cloud.sh
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # cloud-init makes the two schema tests validate the rendered seed for real
+      # instead of self-skipping — that is what catches a template regression a
+      # plain string match would miss. The suite itself needs only bats: it stubs
+      # libvirt/QEMU/network and works in per-test temp dirs, so it runs directly
+      # on the ephemeral runner with no container.
+      - name: Install bats and cloud-init
+        run: sudo apt-get update && sudo apt-get install -y bats cloud-init
+      - name: Bats suite
+        run: bash tests/run.sh
