@@ -32,6 +32,13 @@ On first boot, cloud-init also:
     `tpm/bin/install_plugins`, so **tmux is ready on first launch** (no
     interactive `prefix + I`)
 - **Writes the standard user's `~/.tmux.conf`** from a build-time file (see below).
+- **Creates `~/projects`** for the standard user (`0750`, owned by them) — the working
+  tree, whether or not you ever export it.
+- **Installs firewalld** (`FIREWALL=yes`, the default). The Fedora Cloud Base image
+  ships with **no packet filter at all**, so this is an install, not a tweak.
+- Optionally **exports `~/projects` over SMB3** to the host (`SAMBA=yes`) and
+  **installs fail2ban** (`FAIL2BAN=yes`) — both off by default, both have
+  prerequisites. See [Sharing `~/projects` with the host](#sharing-projects-with-the-host-samba).
 
 ### appuser's tmux config (`TMUX_CONF`)
 
@@ -135,6 +142,152 @@ sudo -k && sudo -v                                  # 3. verify you can still au
 > To make it permanent for future VMs, change the admin's `sudo:` line in
 > `user-data.yaml` and rebuild instead.
 
+## Firewall
+
+The Fedora Cloud Base image has **no firewall**. That is not an oversight on
+Fedora's part — cloud images assume the platform (a security group, a VPC) filters
+for them. Under libvirt there is no such platform, so every port the guest listens
+on is reachable by anything that can route to it.
+
+`FIREWALL=yes` (**the default**) therefore *installs* firewalld and enables it. It is
+safe to bring a firewall up mid-boot in this order, which is what the seed does:
+
+1. `packages:` installs firewalld — installing does **not** start it.
+2. Every `--permanent` rule is written **while the daemon is stopped**.
+3. Only then is it started, so it comes up *with* the rules already in place.
+
+You cannot lock yourself out doing this: firewalld's stock `public` zone already
+allows SSH, and its INPUT chain accepts `established,related` ahead of every zone
+rule — so neither the start nor any later `--reload` drops a live SSH session.
+Outbound traffic is never filtered, so cloud-init's remaining downloads are fine.
+
+## Sharing `~/projects` with the host (Samba)
+
+With `SAMBA=yes` the guest exports the standard user's `~/projects` as an SMB3
+share that **only the host** may mount.
+
+> **Is Samba even the right tool?** It is if the **guest owns the data** — the guest
+> is the box of record, the tree outlives a host reinstall, other machines may mount
+> it later. If instead you just want *one code tree editable from both sides* and the
+> files can live on the **host**, then **virtiofs** is the better answer and it isn't
+> close: no smbd, no SMB password, no port 445, no firewall zone, no SELinux label,
+> no fail2ban surface — and it works in every `NETWORK=` mode. This project does not
+> set that up; it is worth knowing before you reach for Samba.
+
+### Two prerequisites, both enforced at `build`
+
+**1. A network the host can reach.** This is the one that surprises people. The
+default `NETWORK=user` is QEMU's user-mode (slirp) stack: the guest sits behind a
+userspace proxy with no routable address, and **the host cannot open a connection to
+it at all** — not SSH, not SMB. No firewall rule or `smb.conf` setting can change
+that. Use a bridge:
+
+```
+NETWORK=bridge=virbr0
+```
+
+which needs the one-time root step described in
+[Session URI with a bridged network](#session-uri-with-a-bridged-network). `build`
+refuses `SAMBA=yes` on a `user` network rather than shipping a guest running an smbd
+nobody can reach.
+
+**2. `FIREWALL=yes`.** On a bridge the guest shares 192.168.122.0/24 with **every
+other guest**. Without the firewall, "share with the host" would in fact mean "share
+with every VM on that network". `build` refuses `SAMBA=yes` with `FIREWALL=no`.
+
+### How it is locked down
+
+| | |
+|---|---|
+| **Protocol** | SMB 3.1.1 floor (`server min protocol = SMB3_11`). SMB1/NT1 gone. |
+| **On the wire** | signing **and** encryption both `required` — so the host must mount with `seal`, or the server refuses the session. |
+| **Who may connect** | firewalld zone `hostonly`, source scoped to `SMB_HOST_ADDR`**`/32`** — the host alone, not the `/24`. Repeated in `smb.conf`'s `hosts allow`. |
+| **What is listening** | only 445. `disable netbios = yes`, so 137/138/139 never open. `nmb` and `winbind` are not enabled. |
+| **Anonymous** | off in every form (`restrict anonymous = 2`, `map to guest = Never`, `null passwords = no`). |
+| **The share** | `valid users` = the standard user only; `browseable = no`; `wide links = no` confines symlink targets to the share root. |
+| **What is gone** | Fedora's stock `smb.conf` ships `[homes]` (every user's home, exported) and `[printers]`. The seed **replaces** the file, so both are gone. |
+| **SELinux** | the directory is *labelled* `samba_share_t`. The alternative — the `samba_enable_home_dirs` boolean — would grant smbd read/write over **every** user's home; `samba_export_all_rw` is broader still. Neither is warranted for one directory. |
+
+### The SMB password
+
+The Unix accounts have **no password** (`lock_passwd: true`) and that stays true.
+Samba does not care: with the `tdbsam` backend, `smbd` authenticates against its own
+`passdb.tdb` and **never reads `/etc/shadow`** — it only needs the Unix account to
+*exist*, in order to resolve a token.
+
+So the share needs its own password. `build` generates one and writes it to
+`SMB_PASSWORD_FILE` (default `KEYS_DIR/smb-<STD_USER>-<DOMAIN>.cred`, mode `0600`) in
+`mount.cifs`'s `credentials=` format — **the file it creates is the file you mount
+with**. Rebuilds reuse it; delete it to rotate.
+
+> **Where the secret lives — read this.** The password is generated on the host and
+> **injected into the seed**, so it exists in plaintext in `seed.iso` and in the
+> guest's `/var/lib/cloud/instance/user-data.txt` (`0600` root) for the life of the
+> guest. That is a deliberate trade for a non-interactive provision, and it crosses no
+> new trust boundary: the host is the only client, so it has to hold this credential
+> to mount at all. It is **not** a login credential — SSH is key-only and the Unix
+> password is locked — so it grants exactly one thing: a share already firewalled to a
+> single IP. If that trade is wrong for you, set `SAMBA=no` and add the Samba user by
+> hand over SSH.
+
+### Mounting it on the host
+
+Needs `cifs-utils`. `boot` prints this line ready to run, with the guest's real IP:
+
+```bash
+sudo mount -t cifs //<GUEST_IP>/projects /mnt/projects \
+  -o credentials=~/.ssh/smb-appuser-fedora-cloud-01.cred,vers=3.1.1,seal,\
+uid=$(id -u),gid=$(id -g),forceuid,forcegid,nosuid,nodev
+```
+
+`seal` is **not optional** — the server requires encryption. `uid`/`gid` map the
+files to you, because SMB3 carries no POSIX ownership. For `/etc/fstab`, add
+`_netdev,x-systemd.automount,x-systemd.idle-timeout=60` so the host doesn't hang at
+boot when the guest is down.
+
+## fail2ban
+
+`FAIL2BAN=yes` installs fail2ban with jails for **sshd**, **Samba** (only when
+`SAMBA=yes`), and **recidive** (re-bans repeat offenders across the other jails).
+
+> **Be clear-eyed about what this buys.** With key-only SSH and port 445 already
+> scoped to a single source IP, the packet filter and the key policy are doing the
+> real work — a log parser is a weaker lock behind a door that is already bolted. It
+> earns its keep as **defence-in-depth and log hygiene** (and as a safety net if the
+> SSH config is ever regressed). It is not a load-bearing control here, which is why
+> it is off by default.
+
+Three things this setup gets right that most fail2ban guides get wrong:
+
+- **No `/var/log/secure`.** Fedora logs sshd to journald, so the `[sshd]` jail pins
+  `backend = systemd`. Copying a blog's `backend = auto` makes fail2ban open a file
+  that does not exist — and **a jail with a missing logpath takes down every other
+  jail**: the server exits 255, and its unit sets `RestartPreventExitStatus=0 255`, so
+  systemd never retries. That is also why the seed **pre-creates** the log files
+  before starting fail2ban (the `recidive` jail watches fail2ban's own log, which does
+  not exist on a first boot — so without this it would abort on *every* first boot).
+- **fail2ban ships no Samba filter.** Not one of its 101 filters is Samba-aware. This
+  repo ships its own. It also needs a fixed log path: Samba's Fedora default
+  (`log file = log.%m`) writes **one file per client**, so `smb.conf` pins auth events
+  to `/var/log/samba/auth_audit.log` instead. And Samba's `Auth:` line carries no
+  leading timestamp, so the filter matches the date **embedded** in the line — without
+  that, fail2ban falls back to "now", which on a log re-read stamps every historical
+  line with the same instant and can trigger a **mass false-positive ban wave**.
+- **Bans go into fail2ban's own nftables table**, not firewalld rich rules. Fedora's
+  default (`firewallcmd-rich-rules`) writes **runtime-only** rules that any
+  `firewall-cmd --reload` silently erases — and its `actioncheck` is empty, so
+  fail2ban never notices they are gone.
+
+**Do not lock yourself out.** `FAIL2BAN_IGNOREIP` (default
+`127.0.0.1/8 ::1 192.168.122.0/24`) is what stops that; keep your own subnet in it.
+The `[sshd]` jail runs in `aggressive` mode, which can ban a legitimate client that
+drops mid-handshake. If it happens, recover from the serial console:
+
+```bash
+virsh --connect qemu:///session console <DOMAIN>   # Ctrl+] to exit
+sudo fail2ban-client unban --all
+```
+
 ## Layout
 
 The repo itself only holds the tool and its inputs:
@@ -208,6 +361,17 @@ expansion) — use an absolute path. Other common keys: `STD_USER` / `ADMIN_USER
 (the two usernames), `IMAGE_VARIANT` (`generic`/`uki`), `DOMAIN`, `RAM_MB`,
 `VCPUS`, `LIBVIRT_URI`, `VER`, `ARCH`, `OVMF_CODE`, and `COMPOSE` /
 `CHECKSUM_URL` (to pin a download).
+
+The security features have their own keys:
+
+| Key | Default | Does |
+|-----|---------|------|
+| `FIREWALL` | `yes` | install + enable firewalld ([the image ships none](#firewall)) |
+| `SAMBA` | `no` | export `~/projects` over SMB3 to the host ([prerequisites](#sharing-projects-with-the-host-samba)) |
+| `SMB_HOST_ADDR` | `192.168.122.1` | the host's bridge address — the **only** source allowed to reach 445 |
+| `SMB_PASSWORD_FILE` | `KEYS_DIR/smb-<STD_USER>-<DOMAIN>.cred` | generated SMB credentials, in `mount.cifs` format |
+| `FAIL2BAN` | `no` | install fail2ban (sshd + Samba + recidive jails) |
+| `FAIL2BAN_IGNOREIP` | `127.0.0.1/8 ::1 192.168.122.0/24` | never ban these — **your anti-lockout setting** |
 
 Your personal `fedora-cloud.conf` is git-ignored; only the `.example` is tracked.
 

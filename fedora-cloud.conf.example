@@ -69,6 +69,52 @@ BASE_IMAGE_DIR=/var/lib/fedora-cloud/base
 # NVRAM_PATH=/var/lib/fedora-cloud/web01_VARS.fd  # per-VM UEFI varstore path (uefi/uefi-secure
 #                                      # only; empty = libvirt's default nvram dir)
 
+# --- firewall / Samba / fail2ban ---
+# FIREWALL=yes                         # install + enable firewalld on the guest.
+#                                      # Defaults to YES because the Fedora Cloud Base
+#                                      # image ships with NO packet filter at all (its
+#                                      # KIWI description carries <ignore name="firewalld"/>),
+#                                      # so this closes a real hole. It costs nothing:
+#                                      # firewalld's default `public` zone already allows
+#                                      # SSH, and established connections survive both the
+#                                      # start and any later reload.
+#
+# SAMBA=no                             # export the standard user's ~/projects over SMB3
+#                                      # so the HOST can mount it. Requires:
+#                                      #   * a network the host can reach — NETWORK=bridge=virbr0
+#                                      #     (or network=default with qemu:///system). The default
+#                                      #     NETWORK=user gives the guest NO routable address, so
+#                                      #     the host cannot open a connection to it at all and
+#                                      #     `build` will refuse.
+#                                      #   * FIREWALL=yes — without it, port 445 is open to every
+#                                      #     other guest on the bridge, not just your host.
+#                                      # The guest's Unix accounts stay password-less: Samba
+#                                      # authenticates from its own passdb (tdbsam) and never
+#                                      # reads /etc/shadow.
+# SMB_HOST_ADDR=192.168.122.1          # the HOST's address on the libvirt bridge — the only
+#                                      # source allowed to reach port 445 (firewalld scopes it
+#                                      # to /32, and smb.conf's `hosts allow` repeats it). A bare
+#                                      # IPv4, not a CIDR. Check yours: `ip -4 addr show virbr0`.
+# SMB_PASSWORD_FILE=~/.ssh/smb-appuser-fedora-cloud-01.cred
+#                                      # defaults to KEYS_DIR/smb-<STD_USER>-<DOMAIN>.cred.
+#                                      # Generated (0600) on the first `build` with SAMBA=yes, in
+#                                      # mount.cifs's `credentials=` format — so the file that is
+#                                      # created IS the file you mount with. Delete it to rotate.
+#                                      # NOTE: the password is also injected into the seed, so it
+#                                      # exists in plaintext in seed.iso and in the guest's
+#                                      # /var/lib/cloud/instance/user-data.txt (0600 root). See the
+#                                      # README — it is not a login credential (SSH is key-only).
+#
+# FAIL2BAN=no                          # install fail2ban with jails for sshd, Samba (only if
+#                                      # SAMBA=yes) and recidive. Be clear-eyed about what this
+#                                      # buys: with key-only SSH and 445 already scoped to one
+#                                      # source IP, the firewall and the key policy are doing the
+#                                      # real work. This is defence-in-depth and log hygiene.
+# FAIL2BAN_IGNOREIP=127.0.0.1/8 ::1 192.168.122.0/24
+#                                      # never ban these. Keep your own subnet in here — this is
+#                                      # what stops fail2ban locking YOU out. Recover from the
+#                                      # serial console: `fail2ban-client unban --all`.
+
 # --- image + download / verification ---
 # IMAGE_VARIANT=generic                # which Cloud Base image to fetch/boot:
 #                                      #   generic  hybrid BIOS+UEFI, works with any MODE (default)

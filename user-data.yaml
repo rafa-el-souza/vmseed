@@ -4,7 +4,15 @@
 #
 # This is a TEMPLATE. The PLACEHOLDER_* tokens are replaced at build time by
 # `fedora-cloud.sh build` — the usernames (STD_USER / ADMIN_USER), the SSH public
-# keys, the base64-encoded tmux config, and CRYPTO_POLICY. Do not edit those here.
+# keys, the base64-encoded tmux config, CRYPTO_POLICY, and the Samba/fail2ban
+# settings. Do not edit those here.
+#
+# The `#@if FEATURE` / `#@endif` markers are also a build-time construct: the
+# renderer DELETES the enclosed lines when the feature is off (SAMBA, FIREWALL,
+# FAIL2BAN — from the config file), and strips the marker lines themselves when
+# it is on. `#@if A,B` requires BOTH. Markers may be nested, and their own
+# indentation is irrelevant — inside a YAML block scalar they are indented to
+# match the surrounding content so that this template stays valid YAML too.
 
 users:
   # Declaring `users:` replaces cloud-init's default user set. Keep `default`
@@ -40,6 +48,28 @@ packages:
   - gh
   - git
   - btop
+#@if FIREWALL
+  # The Fedora Cloud Base image ships with NO packet filter at all: the KIWI
+  # image description (teams/cloud/cloud.xml) carries `<ignore name="firewalld"/>`
+  # in the CloudCore block that Cloud-Base-Generic inherits. So firewalld is not
+  # "configured" here — it is *installed*. Until it is, every listening port on
+  # the guest is reachable by anything that can route to it.
+  - firewalld
+#@endif
+#@if SAMBA
+  - samba
+  - samba-common-tools          # smbpasswd, pdbedit, testparm
+  - policycoreutils-python-utils  # semanage — NOT in the Cloud image by default
+#@endif
+#@if FAIL2BAN
+  # fail2ban-server carries the engine, every filter, and the systemd (journald)
+  # backend. Deliberately NOT fail2ban-firewalld: that drop-in sets
+  # `banaction = firewallcmd-rich-rules`, whose bans are runtime-only and are
+  # silently wiped by any `firewall-cmd --reload` (its actioncheck is empty, so
+  # fail2ban never notices). We use the nftables banaction instead — see
+  # jail.d/10-vmseed.local.
+  - fail2ban-server
+#@endif
 
 # --- Hardened SSH daemon config ----------------------------------------------
 # Fedora's /etc/ssh/sshd_config ends with `Include /etc/ssh/sshd_config.d/*.conf`
@@ -84,11 +114,262 @@ write_files:
     defer: true
     content: "PLACEHOLDER_TMUX_CONF_B64"
 
+#@if SAMBA
+  # ---- Samba: one share, one client, nothing else -------------------------
+  # This REPLACES Fedora's stock /etc/samba/smb.conf wholesale — that is the
+  # point, not a side effect: the stock file ships [homes] (every user's home,
+  # exported) and [printers]. Appending would leave both live.
+  - path: /etc/samba/smb.conf
+    owner: root:root
+    permissions: '0644'
+    content: |
+      # Managed by cloud-init.
+      [global]
+          workgroup      = WORKGROUP
+          server string  =
+          server role    = standalone server
+          passdb backend = tdbsam
+
+          # --- Protocol floor: SMB 3.1.1 (SHA-512 preauth integrity, AES-GCM).
+          server min protocol     = SMB3_11
+          client min protocol     = SMB3_11
+          client ipc min protocol = SMB3_11
+
+          # --- Signing + encryption, both mandatory. The host must mount with
+          # `seal` or the server will refuse the session (that is intended).
+          server signing     = mandatory
+          server smb encrypt = required
+
+          # --- Anonymous / guest access: off, in every form.
+          restrict anonymous = 2        # 2 also blocks anonymous IPC$
+          map to guest       = Never
+          null passwords     = no
+          ntlm auth          = ntlmv2-only
+          lanman auth        = no
+          raw NTLMv2 auth    = no
+
+          # --- Network exposure. The host mounts by IP, so NetBIOS is pure
+          # attack surface: 137/138/139 stay shut and only 445 listens.
+          disable netbios = yes
+          smb ports       = 445
+          # hosts allow WINS over hosts deny when a host matches both.
+          hosts allow = PLACEHOLDER_SMB_HOST_ADDR 127.0.0.1
+          hosts deny  = 0.0.0.0/0
+          # NOTE: `interfaces` / `bind interfaces only` are deliberately NOT set.
+          # cloud-init runs early and smbd fails to bind if the named interface is
+          # not up yet. firewalld's source-scoped zone plus `hosts allow` give the
+          # same containment with no boot-order race.
+
+          # --- Printing: gone.
+          load printers           = no
+          printing                = bsd
+          printcap name           = /dev/null
+          disable spoolss         = yes
+          show add printer wizard = no
+
+          usershare max shares = 0      # no user-defined shares
+          unix extensions      = no     # SMB1-era; irrelevant on SMB3
+
+          # --- Logging. Fedora's default is `log file = log.%m` — ONE FILE PER
+          # CLIENT, i.e. no stable path for fail2ban to watch. The `class:level@path`
+          # form pins auth events to a fixed file. auth_audit logs failures at
+          # level 2 and successes at 3.
+          logging      = file
+          log file     = /var/log/samba/log.smbd
+          max log size = 1000
+          log level    = 1 auth_audit:3@/var/log/samba/auth_audit.log
+
+      [projects]
+          path        = /home/PLACEHOLDER_STD_USER/projects
+          valid users = PLACEHOLDER_STD_USER
+          read only   = no
+          browseable  = no
+          guest ok    = no
+          server smb encrypt = required
+
+          create mask    = 0644
+          directory mask = 0755
+          force user     = PLACEHOLDER_STD_USER
+          force group    = PLACEHOLDER_STD_USER
+
+          # `wide links = no` (the default) already confines symlink targets to the
+          # share root. Do NOT add `follow symlinks = no` — that breaks symlinks
+          # *inside* the share, which a projects tree is full of (node_modules,
+          # virtualenvs).
+          wide links      = no
+          follow symlinks = yes
+
+  # The initial SMB password, generated on the HOST at build time. It lives on
+  # tmpfs and is shredded by runcmd the moment smbpasswd has consumed it; /run is
+  # gone on reboot regardless.
+  #
+  # Honest note on where this secret lives: it is also in the seed ISO and in
+  # /var/lib/cloud/instance/user-data.txt (0600 root) for the life of the guest.
+  # That is the accepted trade of a non-interactive provision. It is NOT a login
+  # credential — SSH is key-only and the Unix password is locked — so it grants
+  # exactly one thing: the share, which is already firewalled to a single IP.
+  - path: /run/smb-init.pass
+    owner: root:root
+    permissions: '0600'
+    content: "PLACEHOLDER_SMB_PASSWORD"
+#@endif
+
+#@if FAIL2BAN
+  # ---- fail2ban -----------------------------------------------------------
+  # jail.d/*.local outranks BOTH jail.conf and every jail.d/*.conf (the reader
+  # globs all .conf first, then all .local — the numeric prefix does not enter
+  # into it), so this one file wins without touching the shipped configs.
+  - path: /etc/fail2ban/jail.d/10-vmseed.local
+    owner: root:root
+    permissions: '0644'
+    content: |
+      # Managed by cloud-init.
+      [DEFAULT]
+      # --- Lockout protection. The most important lines in this file.
+      ignoreself = true
+      ignoreip   = PLACEHOLDER_F2B_IGNOREIP
+
+      bantime  = 1h
+      findtime = 10m
+      maxretry = 5
+
+      # Exponential backoff: 1h, 2h, 4h ... capped at bantime.maxtime.
+      bantime.increment   = true
+      bantime.multipliers = 1 2 4 8 16 32 64
+      bantime.maxtime     = 5w
+      bantime.rndtime     = 5m
+
+      # Ban into fail2ban's OWN nftables table (inet f2b-table, hook input,
+      # priority -1 — evaluated BEFORE firewalld's accept rules, so a ban wins).
+      # This is not a conflict with firewalld: nftables tables are independent
+      # namespaces, and firewalld only ever flushes its own. The firewalld
+      # banaction Fedora ships by default (firewallcmd-rich-rules) writes
+      # RUNTIME-ONLY rules that any `firewall-cmd --reload` erases, and its
+      # actioncheck is empty so fail2ban never re-adds them.
+      banaction          = nftables[type=multiport]
+      banaction_allports = nftables[type=allports]
+
+      # NOTE: deliberately no global `backend` here. jail.conf's default is fine,
+      # and [sshd] pins its own below. A global `backend = auto` would make the
+      # sshd jail try to open /var/log/secure — which does not exist on Fedora —
+      # and a jail with a missing logpath aborts the WHOLE server (see below).
+
+      [sshd]
+      enabled  = true
+      # Explicit. Fedora logs sshd to journald and ships no /var/log/secure;
+      # `auto` here is the classic way to take every jail down at once.
+      backend  = systemd
+      # On a key-only server `normal` matches almost nothing — the real traffic is
+      # scanners that never finish a handshake, which only ddos/extra see.
+      # Trade-off: aggressive can ban a legitimate client that drops mid-preauth.
+      # That is what ignoreip is for.
+      mode     = aggressive
+      port     = ssh
+      maxretry = 4
+      # journalmatch is deliberately NOT overridden here. The shipped
+      # filter.d/sshd.conf already carries:
+      #   _SYSTEMD_UNIT=sshd.service + _COMM=sshd + _COMM=sshd-session
+      # OpenSSH >= 9.8 (F44 ships 10.2) moved per-connection auth into a separate
+      # `sshd-session` binary — that is what logs the failures. Hand-writing this
+      # line without _COMM=sshd-session yields a jail that loads, looks healthy,
+      # and matches nothing, forever.
+
+      [recidive]
+      # Re-bans anyone the other jails keep catching. This is the jail that earns
+      # its keep here; it reads fail2ban's own log.
+      enabled  = true
+      backend  = auto
+      logpath  = /var/log/fail2ban.log
+      bantime  = 1w
+      findtime = 1d
+      maxretry = 5
+
+  - path: /etc/fail2ban/fail2ban.d/10-vmseed.local
+    owner: root:root
+    permissions: '0644'
+    content: |
+      # Managed by cloud-init.
+      [Definition]
+      # Fedora's default dbpurgeage (1d) EQUALS recidive's findtime and is 7x
+      # below its 1w bantime — week-long bans get purged from the DB and are not
+      # restored across a restart or reboot. Rule: dbpurgeage > the longest
+      # bantime of any jail.
+      dbpurgeage = 10d
+
+      # Dual-stack guest. The nftables action already ships ipv6 sets.
+      # (This key lives in fail2ban.conf, NOT jail.conf.)
+      allowipv6 = auto
+#@endif
+
+#@if SAMBA,FAIL2BAN
+  # ---- fail2ban x Samba ---------------------------------------------------
+  # fail2ban ships NO Samba filter — 101 filters, not one of them samba/smb/cifs
+  # (upstream #4029 is still an open filter-request). This one is ours.
+  - path: /etc/fail2ban/filter.d/samba-auth.conf
+    owner: root:root
+    permissions: '0644'
+    content: |
+      # Managed by cloud-init. Samba >= 4.7 authentication audit filter.
+      #
+      # Requires, in smb.conf (both are set by this seed):
+      #   log level = 1 auth_audit:3@/var/log/samba/auth_audit.log
+      #
+      # Matches, e.g.:
+      #   Auth: [SMB2,(null)] user []\[baduser] at [Wed, 01 Jul 2026 00:43:05.110514 UTC]
+      #     with [NTLMv2] status [NT_STATUS_NO_SUCH_USER] workstation [CLIENT]
+      #     remote host [ipv4:192.168.122.1:41122] ...
+      #
+      # THE SUBTLE PART, do not "simplify" it: the `Auth:` line is the SECOND line
+      # of Samba's two-line debug entry and carries no line-leading timestamp. Left
+      # alone, fail2ban warns "Found a match but no valid date/time found" on every
+      # single match and falls back to an inherited/current time — which under
+      # concurrent smbd PIDs is the WRONG time, and on any full log re-read stamps
+      # every historical line with "now", crowding them into one findtime window
+      # (a mass false-positive ban wave).
+      #
+      # So `datepattern` below matches the date EMBEDDED in the Auth: line. But
+      # fail2ban EXCISES the matched date from the line before applying failregex —
+      # which is why there is a `.*` where `at [...]` would otherwise be anchored.
+      # Bolting a datepattern onto a regex that still anchors `at [...]` yields
+      # ZERO matches.
+      [Definition]
+
+      # Any NT_STATUS_* except NT_STATUS_OK — a successful auth is not a failure.
+      _ntstatus_fail = NT_STATUS_(?!OK\b)[A-Z0-9_]+
+
+      failregex = ^\s*Auth: \[[^\]]*\] user \[[^\]]*\]\\\[[^\]]*\].*\sstatus \[%(_ntstatus_fail)s\].*\sremote host \[ipv[46]:<HOST>:\d+\]
+
+      ignoreregex =
+
+      datepattern = at \[%%a, %%d %%b %%Y %%H:%%M:%%S
+
+  - path: /etc/fail2ban/jail.d/20-samba.local
+    owner: root:root
+    permissions: '0644'
+    content: |
+      # Managed by cloud-init.
+      # Only ever written when Samba is actually installed: a jail whose logpath
+      # does not exist makes fail2ban exit 255, and its unit sets
+      # RestartPreventExitStatus=0 255 — so systemd never retries and EVERY jail,
+      # sshd included, stays down permanently.
+      [samba-auth]
+      enabled  = true
+      backend  = auto   # file-based; Samba does not log to journald here
+      filter   = samba-auth
+      logpath  = /var/log/samba/auth_audit.log
+      port     = 445
+      protocol = tcp
+      maxretry = 5
+#@endif
+
 runcmd:
   # 1) Tighten the system-wide crypto policy (CRYPTO_POLICY at build time).
   #    Default DEFAULT:NO-SHA1 bans SHA-1 while still allowing 2048-bit RSA certs
   #    (FUTURE requires 3072-bit RSA and breaks TLS to some CDNs). update-crypto-
   #    policies rewrites the per-app configs; the sshd reload below picks them up.
+  #    This is safe for Samba: NO-SHA1 removes SHA-1 from *signatures* only and
+  #    leaves HMAC-SHA1 alone, and Samba is not a crypto-policies back-end at all.
+  #    (FIPS would be a different story — it breaks NTLM's MD4/RC4.)
   - [ update-crypto-policies, --set, PLACEHOLDER_CRYPTO_POLICY ]
   # 2) Validate the sshd drop-in and apply it. `sshd -t` fails the boot loudly
   #    if the config is broken, rather than silently locking you out.
@@ -97,7 +378,102 @@ runcmd:
   #    root locked and root SSH is disabled above; this asserts it explicitly.
   #    `passwd -l` is idempotent. The admin still reaches root via sudo.
   - [ passwd, -l, root ]
-  # 4) Per-user setup for the standard user only, run as that user with a login
+  # 4) The standard user's projects directory. Created unconditionally — it is
+  #    the user's working tree whether or not it is ever exported over SMB.
+  - [ install, -d, -o, PLACEHOLDER_STD_USER, -g, PLACEHOLDER_STD_USER, -m, '0750', /home/PLACEHOLDER_STD_USER/projects ]
+
+#@if FIREWALL
+  # 5) Firewall. Ordering is the whole game here, and it is safe in this order:
+  #      - `dnf install firewalld` (the packages: block above) does NOT start it;
+  #        the unit is preset-enabled but stays stopped until we start it.
+  #      - every --permanent rule below is written while the daemon is STOPPED
+  #        (firewall-cmd --permanent writes the config backend directly).
+  #      - when it finally starts it comes up WITH the rules already in place.
+  #      - the stock `public` zone already allows ssh, and firewalld's INPUT chain
+  #        accepts established,related ahead of every zone rule — so neither the
+  #        start nor any later --reload can drop a live SSH session.
+  #    Outbound is never filtered, so cloud-init's remaining downloads are fine.
+  - |
+    set -eu
+    #@if SAMBA
+    # A dedicated zone bound to the host's source address, rather than a pile of
+    # rich rules: the CIDR is stated once, `firewall-cmd --zone=hostonly --list-all`
+    # audits the whole host-only surface in one shot, and rich rules of equal
+    # priority have no defined ordering.
+    #
+    # /32 — the host alone. NOT the /24: on a bridged libvirt network every other
+    # guest is on that subnet too, and would otherwise be able to mount the share.
+    firewall-cmd --permanent --new-zone=hostonly 2>/dev/null || true  # idempotent
+    firewall-cmd --permanent --zone=hostonly --add-source=PLACEHOLDER_SMB_HOST_ADDR/32
+    firewall-cmd --permanent --zone=hostonly --add-port=445/tcp
+    # SSH stays reachable from the default zone too; this only guarantees that if
+    # `public` is ever tightened, the host never loses its way in.
+    firewall-cmd --permanent --zone=hostonly --add-service=ssh
+    #@endif
+    systemctl enable --now firewalld
+    firewall-cmd --reload
+#@endif
+
+#@if SAMBA
+  # 6) Samba. The Unix accounts have NO password (lock_passwd: true) and that is
+  #    fine: with the tdbsam backend smbd authenticates against passdb.tdb and
+  #    never reads /etc/shadow — it only needs the Unix account to *exist*, to
+  #    resolve a token. (`obey pam restrictions` defaults to no, and PAM cannot
+  #    serve SMB challenge/response anyway.)
+  - |
+    set -eu
+    # SELinux: label the share directory rather than flipping a boolean. smbd
+    # already has unconditional search on /home and its subdirs, and unconditional
+    # read/write on samba_share_t wherever it lives — so the label alone is enough.
+    # `samba_enable_home_dirs` would instead grant smbd read/write over EVERY
+    # user's home content, and samba_export_all_rw is broader still. Neither is
+    # warranted for one directory.
+    semanage fcontext -a -t samba_share_t '/home/PLACEHOLDER_STD_USER/projects(/.*)?' \
+      || semanage fcontext -m -t samba_share_t '/home/PLACEHOLDER_STD_USER/projects(/.*)?'
+    restorecon -R -v /home/PLACEHOLDER_STD_USER/projects
+
+    # Seed the Samba password from the build-time secret, then destroy it.
+    # `smbpasswd -s` reads the password twice from stdin (no tty). Guarded by
+    # pdbedit so a re-run does not reset a password the operator has since changed.
+    if ! pdbedit -L -u PLACEHOLDER_STD_USER >/dev/null 2>&1; then
+      p=$(cat /run/smb-init.pass)
+      printf '%s\n%s\n' "$p" "$p" | smbpasswd -s -a PLACEHOLDER_STD_USER
+      unset p
+    fi
+    smbpasswd -e PLACEHOLDER_STD_USER
+    shred -u /run/smb-init.pass
+
+    # Fail the boot loudly on a broken config rather than starting a half-open server.
+    testparm -s >/dev/null
+
+    # smbd only. Fedora's unit is `smb`, not `smbd`. nmb (NetBIOS) and winbind are
+    # not enabled: the host mounts by IP and there is no AD.
+    systemctl enable --now smb
+#@endif
+
+#@if FAIL2BAN
+  # 7) fail2ban — LAST, and only after its logs exist.
+  #    This is not fussiness. A jail whose logpath is missing makes the server
+  #    exit 255 at config time, and fail2ban.service sets
+  #    RestartPreventExitStatus=0 255, so systemd never retries: one missing file
+  #    silently takes down every jail, permanently. The recidive jail watches
+  #    /var/log/fail2ban.log — which fail2ban itself has not written yet on a first
+  #    boot — so without these touches it aborts on EVERY first boot.
+  - |
+    set -eu
+    install -d -m 0755 /var/log/samba
+    touch /var/log/fail2ban.log
+    chmod 0640 /var/log/fail2ban.log
+    #@if SAMBA
+    touch /var/log/samba/auth_audit.log
+    #@endif
+    restorecon -Rv /var/log/samba /var/log/fail2ban.log || true
+    systemctl enable --now fail2ban
+    # Surface a failure in the cloud-init log instead of leaving it silent.
+    fail2ban-client status || journalctl -u fail2ban -n 50 --no-pager
+#@endif
+
+  # 8) Per-user setup for the standard user only, run as that user with a login
   #    shell so HOME and ~ resolve to its home. git and tmux come from `packages`
   #    above, which the package module installs before runcmd runs.
   - [ runuser, -l, PLACEHOLDER_STD_USER, -c, "curl -fsSL https://claude.ai/install.sh | bash" ]
