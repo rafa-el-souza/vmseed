@@ -153,12 +153,14 @@ on is reachable by anything that can route to it.
 safe to bring a firewall up mid-boot in this order, which is what the seed does:
 
 1. `packages:` installs firewalld — installing does **not** start it.
-2. Every `--permanent` rule is written **while the daemon is stopped**.
+2. Every rule is written **while the daemon is stopped**, with `firewall-offline-cmd`
+   (which edits the permanent config on disk — `firewall-cmd --permanent` can't be
+   used here, as it needs the running daemon over D-Bus).
 3. Only then is it started, so it comes up *with* the rules already in place.
 
 You cannot lock yourself out doing this: firewalld's stock `public` zone already
 allows SSH, and its INPUT chain accepts `established,related` ahead of every zone
-rule — so neither the start nor any later `--reload` drops a live SSH session.
+rule — so the start does not drop a live SSH session.
 Outbound traffic is never filtered, so cloud-init's remaining downloads are fine.
 
 ## Sharing `~/projects` with the host (Samba)
@@ -346,19 +348,23 @@ smbpasswd -e appuser
 testparm -s        # fail loudly here rather than starting a broken server
 ```
 
-**5. Firewall — configure, then start, then reload.** `--permanent` writes the
-config whether or not the daemon is running; starting it afterwards brings it up
-*with* the rules already present. The stock `public` zone already allows SSH, and
-established connections survive, so this cannot drop your session:
+**5. Firewall — start, then configure, then reload.** `firewall-cmd --permanent`
+talks to firewalld over D-Bus, so the daemon must be running first — with it
+stopped it fails "FirewallD is not running". Start it, add the permanent rules,
+then `--reload` to apply them. The stock `public` zone already allows SSH, and
+established connections survive a reload, so this cannot drop your session:
 
 ```bash
+systemctl enable --now firewalld
 firewall-cmd --permanent --new-zone=hostonly
 firewall-cmd --permanent --zone=hostonly --add-source=192.168.122.1/32   # the host, /32
 firewall-cmd --permanent --zone=hostonly --add-port=445/tcp
 firewall-cmd --permanent --zone=hostonly --add-service=ssh
-systemctl enable --now firewalld
 firewall-cmd --reload
 ```
+
+(The non-interactive seed instead stages these with `firewall-offline-cmd` while
+firewalld is still stopped, then starts it once — same end state, no reload.)
 
 **6. Start Samba.** Fedora's unit is `smb`, not `smbd`; leave `nmb` and `winbind`
 off (the host mounts by IP, and there is no AD):
