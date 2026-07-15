@@ -26,6 +26,7 @@ BASE_IMAGE_DIR=/var/lib/fedora-cloud/base
 # --- seed / paths ---
 # TEMPLATE=./user-data.yaml            # cloud-config template
 # TMUX_CONF=./dotfiles/tmux.conf       # tmux config injected into the std user's ~/.tmux.conf
+# DIAG_SCRIPT=./tools/guest-diagnostics.sh  # script injected when DIAGNOSTICS=yes (see below)
 # KEYS_DIR=~/.ssh                      # where the SSH keys live (default $HOME/.ssh)
 # STD_USER=appuser                     # standard (no-sudo) username; valid Linux name
 # ADMIN_USER=admin                     # admin (wheel, passwordless sudo) username
@@ -114,6 +115,12 @@ BASE_IMAGE_DIR=/var/lib/fedora-cloud/base
 #                                      # never ban these. Keep your own subnet in here — this is
 #                                      # what stops fail2ban locking YOU out. Recover from the
 #                                      # serial console: `fail2ban-client unban --all`.
+#
+# DIAGNOSTICS=no                       # drop the read-only guest-diagnostics.sh (DIAG_SCRIPT) into
+#                                      # the admin user's home, so after boot you can run
+#                                      # `sudo bash ~/guest-diagnostics.sh` to dump cloud-init /
+#                                      # firewall / Samba / fail2ban state. A debugging aid; off by
+#                                      # default so ordinary guests don't carry it.
 
 # --- image + download / verification ---
 # IMAGE_VARIANT=generic                # which Cloud Base image to fetch/boot:
