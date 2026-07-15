@@ -146,6 +146,20 @@ main() {
       val="${val#"${val%%[![:space:]]*}"}"; val="${val%"${val##*[![:space:]]}"}"
       _is_known_key "$key" || _die "config:$lineno: unknown key: '$key'"
       _validate_value "$key" "$val" "$lineno"
+      # Expand a leading '~' (or '~/') in path values to $HOME. Config values are
+      # read as literal strings, so the shell's own tilde expansion never runs on
+      # them — without this a config path like '~/.ssh/foo.pub' would be taken
+      # verbatim and create a literal '~' directory under the CWD instead of
+      # landing in the home directory. (The built-in KEYS_DIR default uses "$HOME"
+      # directly and so was never affected — which is why only config-set paths,
+      # e.g. STD_KEY_FILE/ADM_KEY_FILE, misbehaved.)
+      case "$key" in
+        TEMPLATE|KEYS_DIR|STD_KEY_FILE|ADM_KEY_FILE|TMUX_CONF|OVERLAY_IMAGE_DIR|BASE_IMAGE_DIR|OVMF_CODE|NVRAM_PATH|SMB_PASSWORD_FILE)
+          case "$val" in
+            "~")   val="$HOME" ;;
+            "~/"*) val="$HOME/${val#\~/}" ;;
+          esac ;;
+      esac
       cfg["$key"]="$val"
     done < "$file"
   }

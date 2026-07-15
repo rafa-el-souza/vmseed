@@ -81,6 +81,32 @@ load helpers
   assert_success   # would fail validation as "4096   # plenty" if not stripped
 }
 
+@test "parse: a leading '~' in a config path is expanded to \$HOME" {
+  # Config values are read as literal strings, so the shell never runs its own
+  # tilde expansion on them. Without the expansion in _load_config, a path like
+  # '~/keys/appuser-...pub' is taken verbatim and the key lands in a literal '~'
+  # directory under the CWD instead of the home directory.
+  local home="$TMP/home"; mkdir -p "$home"
+  local conf; conf="$(mkconf_raw \
+    "OVERLAY_IMAGE_DIR=$TMP/overlay" \
+    "BASE_IMAGE_DIR=$TMP/base" \
+    "KEYS_DIR=~/keys" \
+    "STD_KEY_FILE=~/keys/appuser-fedora-cloud-01.pub" \
+    "ADM_KEY_FILE=~/keys/admin-fedora-cloud-01.pub" \
+    "GENERATE_KEYS=yes" \
+    "ENCRYPT_KEYS=no" \
+    "SEED_METHOD=cloud-init")"
+  # Run from a CWD we own, so a literal '~' dir (the bug) would surface there.
+  cd "$TMP"
+  HOME="$home" run bash "$SCRIPT" --config "$conf" build
+  assert_success
+  # The keys landed under $HOME, expanded...
+  [ -f "$home/keys/appuser-fedora-cloud-01.pub" ]
+  [ -f "$home/keys/admin-fedora-cloud-01.pub" ]
+  # ...and no literal '~' directory was created under the CWD.
+  [ ! -e "$TMP/~" ]
+}
+
 @test "parse: a '#' with no leading whitespace is NOT a comment" {
   # Proven by the value reaching validation intact: DOMAIN rejects '#', and the
   # error quotes the whole value. If the stripper were too eager we would instead
