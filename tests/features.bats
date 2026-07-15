@@ -19,6 +19,20 @@ seed() { cat "$(ud)"; }
 # comments on the guest as well.)
 seed_code() { grep -vE '^[[:space:]]*#' "$(ud)"; }
 
+# guest_file <path> — echo the write_files content body written to <path> on the
+# guest, with the 6-space `content: |` indent stripped. Used to inspect an
+# embedded config file (smb.conf, a fail2ban jail) as the guest will see it.
+guest_file() {
+  awk -v want="  - path: $1" '
+    $0 == want { found=1; next }
+    found && !incontent { if ($0 ~ /^    content: *\|/) incontent=1; next }
+    incontent {
+      if ($0 != "" && $0 !~ /^      /) exit   # dedent below the content body = end
+      sub(/^      /, ""); print
+    }
+  ' "$(ud)"
+}
+
 BRIDGE="NETWORK=bridge=virbr0"
 
 # ------------------------------------------------------------------ firewalld
@@ -113,6 +127,26 @@ BRIDGE="NETWORK=bridge=virbr0"
   assert_contains "disable netbios = yes" "$s"               # only 445 listens
   assert_contains "smb ports       = 445" "$s"
   assert_contains "wide links      = no" "$s"
+}
+
+@test "samba/fail2ban: no inline '#' comments in the embedded config files" {
+  # Neither smb.conf nor fail2ban strips a trailing '# ...' from a value: it
+  # becomes part of the value and the parse fails (testparm: "value is not
+  # boolean!"), which aborts the Samba runcmd under set -eu and takes smb +
+  # fail2ban down. Every '#' in these files must start its own line.
+  bash "$SCRIPT" --config "$(mkconf "$BRIDGE" "SAMBA=yes" "FAIL2BAN=yes")" build >/dev/null 2>&1
+  local f body bad
+  for f in /etc/samba/smb.conf /etc/fail2ban/jail.d/20-samba.local; do
+    body="$(guest_file "$f")"
+    [ -n "$body" ]   # the file must actually be embedded in the seed
+    # Drop full-line comments (first non-space char is '#'); any '#' surviving in
+    # what's left is an inline comment on a directive line.
+    bad="$(printf '%s\n' "$body" | grep -vE '^[[:space:]]*#' | grep -nE '#' || true)"
+    if [ -n "$bad" ]; then
+      printf 'inline comment(s) in %s:\n%s\n' "$f" "$bad" >&2
+      return 1
+    fi
+  done
 }
 
 @test "samba: interfaces/bind-interfaces-only are NOT set (they race cloud-init)" {
