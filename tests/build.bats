@@ -28,13 +28,16 @@ ud() { printf '%s/overlay/build/%s/user-data\n' "$TMP" "${1:-fedora-cloud-01}"; 
 }
 
 @test "build: every PLACEHOLDER token is substituted" {
-  bash "$SCRIPT" --config "$(mkconf "SAMBA=no")" build >/dev/null 2>&1
+  # Enable every feature so all tokens actually appear and must be filled.
+  bash "$SCRIPT" --config "$(mkconf "NETWORK=bridge=virbr0" "SAMBA=yes" "FAIL2BAN=yes" \
+    "DIAGNOSTICS=yes" "SSH_ALLOW=10.0.0.9")" build >/dev/null 2>&1
   # The header comment legitimately says the word PLACEHOLDER_*; the tokens
   # themselves must be gone. Check for the exact tokens, not the prose.
   local out; out="$(cat "$(ud)")"
   for token in PLACEHOLDER_STANDARD_KEY PLACEHOLDER_ADMIN_KEY PLACEHOLDER_TMUX_CONF_B64 \
                PLACEHOLDER_STD_USER PLACEHOLDER_ADMIN_USER PLACEHOLDER_CRYPTO_POLICY \
-               PLACEHOLDER_SMB_PASSWORD PLACEHOLDER_SMB_HOST_ADDR PLACEHOLDER_F2B_IGNOREIP; do
+               PLACEHOLDER_SMB_PASSWORD PLACEHOLDER_SMB_ALLOW PLACEHOLDER_SSH_ALLOW \
+               PLACEHOLDER_F2B_IGNOREIP PLACEHOLDER_DIAG_SCRIPT_B64; do
     refute_contains "$token" "$out"
   done
 }

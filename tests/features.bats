@@ -56,7 +56,7 @@ BRIDGE="NETWORK=bridge=virbr0"
   # and aborts the whole runcmd.
   bash "$SCRIPT" --config "$(mkconf "$BRIDGE" "SAMBA=yes")" build >/dev/null 2>&1
   local perm start
-  perm="$(grep -n -- 'firewall-offline-cmd --zone=hostonly --add-port=445/tcp' "$(ud)" | cut -d: -f1)"
+  perm="$(grep -n 'firewall-offline-cmd.*445' "$(ud)" | cut -d: -f1)"
   start="$(grep -n 'systemctl enable --now firewalld' "$(ud)" | cut -d: -f1)"
   [ -n "$perm" ] && [ -n "$start" ]
   [ "$perm" -lt "$start" ]
@@ -107,12 +107,28 @@ BRIDGE="NETWORK=bridge=virbr0"
   assert_contains "valid users = dev" "$s"
 }
 
-@test "samba: only the configured host address may reach the share" {
-  bash "$SCRIPT" --config "$(mkconf "$BRIDGE" "SAMBA=yes" "SMB_HOST_ADDR=10.1.2.3")" build >/dev/null 2>&1
+@test "samba: only the SMB_ALLOW hosts may reach the share (a list)" {
+  bash "$SCRIPT" --config "$(mkconf "$BRIDGE" "SAMBA=yes" "SMB_ALLOW=10.1.2.3 10.1.2.4")" build >/dev/null 2>&1
   local s; s="$(seed)"
-  assert_contains "hosts allow = 10.1.2.3 127.0.0.1" "$s"
-  # /32 — the host alone, not the whole bridge subnet.
-  assert_contains "--add-source=10.1.2.3/32" "$s"
+  # the list drives both smb.conf hosts allow and the per-source 445 rich rules,
+  # so every OTHER host on the bridge is left out.
+  assert_contains "hosts allow = 10.1.2.3 10.1.2.4 127.0.0.1" "$s"
+  assert_contains "for _ip in 10.1.2.3 10.1.2.4" "$s"
+  assert_contains "add-rich-rule" "$s"
+}
+
+@test "firewall: SSH is left open by default (SSH_ALLOW empty)" {
+  bash "$SCRIPT" --config "$(mkconf "$BRIDGE" "SAMBA=yes")" build >/dev/null 2>&1
+  # empty SSH_ALLOW -> the runtime guard is false, so ssh is never removed.
+  assert_contains 'if [ -n "" ];' "$(seed)"
+}
+
+@test "firewall: SSH_ALLOW restricts ssh to the listed sources" {
+  bash "$SCRIPT" --config "$(mkconf "$BRIDGE" "SAMBA=yes" "SSH_ALLOW=10.9.9.9")" build >/dev/null 2>&1
+  local s; s="$(seed)"
+  assert_contains 'if [ -n "10.9.9.9" ];' "$s"
+  assert_contains "--remove-service=ssh" "$s"
+  assert_contains "for _ip in 10.9.9.9" "$s"
 }
 
 @test "samba: the hardening directives that matter are all present" {

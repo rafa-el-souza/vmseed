@@ -60,7 +60,7 @@ main() {
       BASE_IMAGE_DIR|STD_USER|ADMIN_USER|GENERATE_KEYS|ENCRYPT_KEYS|SEED_METHOD|\
       CRYPTO_POLICY|INSTANCE_ID|VM_HOSTNAME|DOMAIN|RAM_MB|VCPUS|LIBVIRT_URI|NETWORK|OSINFO|\
       OVMF_CODE|NVRAM_PATH|TPM|IMAGE_VARIANT|VER|ARCH|FEDORA_GPG_URL|CHECKSUM_URL|COMPOSE|\
-      FIREWALL|SAMBA|FAIL2BAN|DIAGNOSTICS|SMB_HOST_ADDR|SMB_PASSWORD_FILE|FAIL2BAN_IGNOREIP) return 0 ;;
+      FIREWALL|SAMBA|FAIL2BAN|DIAGNOSTICS|SMB_ALLOW|SSH_ALLOW|SMB_PASSWORD_FILE|FAIL2BAN_IGNOREIP) return 0 ;;
       *) return 1 ;;
     esac
   }
@@ -85,19 +85,12 @@ main() {
         [[ "$val" =~ ^[A-Za-z0-9._-]+$ ]] || _die "$where may contain only [A-Za-z0-9._-], got '$val'" ;;
       GENERATE_KEYS|ENCRYPT_KEYS|TPM|FIREWALL|SAMBA|FAIL2BAN|DIAGNOSTICS)
         [[ "$val" =~ ^(yes|no)$ ]] || _die "$where must be 'yes' or 'no', got '$val'" ;;
-      SMB_HOST_ADDR)
-        # A single IPv4 literal (the host's address on the libvirt bridge). The
-        # firewalld zone scopes it to /32 and smb.conf's `hosts allow` takes it
-        # bare, so a CIDR here would be wrong in one of the two places. Octets are
-        # range-checked: a loose \d{1,3} would wave 999.1.1.1 through to firewalld,
-        # which then fails at boot instead of here.
-        local o='(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])'
-        [[ "$val" =~ ^${o}\.${o}\.${o}\.${o}$ ]] \
-          || _die "$where must be a bare IPv4 address (e.g. 192.168.122.1), got '$val'" ;;
-      FAIL2BAN_IGNOREIP)
-        # A space-separated allowlist of IPs/CIDRs passed straight to fail2ban.
-        # Keep it to the characters fail2ban accepts; anything else is a typo that
-        # would otherwise surface as a jail that silently bans the operator.
+      SMB_ALLOW|SSH_ALLOW|FAIL2BAN_IGNOREIP)
+        # Space-separated allowlists of source IPs/CIDRs. SMB_ALLOW feeds the
+        # firewalld 445 rich rules + smb.conf `hosts allow`; SSH_ALLOW feeds the
+        # ssh rich rules (empty = ssh left open); FAIL2BAN_IGNOREIP feeds fail2ban.
+        # Restrict to the characters those consumers accept — anything else is a
+        # typo that would otherwise surface as a broken rule or a silent lockout.
         [[ "$val" =~ ^[0-9a-fA-F.:/[:space:]]+$ ]] \
           || _die "$where must be space-separated IPs/CIDRs, got '$val'" ;;
       SEED_METHOD)
@@ -264,7 +257,7 @@ main() {
     awk -v std="$1" -v adm="$2" -v tmux="$3" -v smbpass="$4" -v feats="$5" \
         -v diag="$6" \
         -v su="$std_user" -v au="$admin_user" -v crypto="$crypto_policy" \
-        -v smbhost="$smb_host_addr" -v f2bignore="$fail2ban_ignoreip" '
+        -v smballow="$smb_allow" -v sshallow="$ssh_allow" -v f2bignore="$fail2ban_ignoreip" '
       function on(cond,   n, i, part) {   # every feature in "A,B" must be enabled
         n = split(cond, part, ",")
         for (i = 1; i <= n; i++)
@@ -296,7 +289,8 @@ main() {
         gsub(/PLACEHOLDER_ADMIN_USER/, au)
         gsub(/PLACEHOLDER_CRYPTO_POLICY/, crypto)
         gsub(/PLACEHOLDER_SMB_PASSWORD/, smbpass)
-        gsub(/PLACEHOLDER_SMB_HOST_ADDR/, smbhost)
+        gsub(/PLACEHOLDER_SMB_ALLOW/, smballow)
+        gsub(/PLACEHOLDER_SSH_ALLOW/, sshallow)
         gsub(/PLACEHOLDER_F2B_IGNOREIP/, f2bignore)
         print
       }
@@ -419,7 +413,7 @@ main() {
     # run as them, but under sudo the mount's uid= must still resolve to their id.)
     printf '        -o credentials=%s,vers=3.1.1,seal,uid=$(id -u),gid=$(id -g),forceuid,forcegid,nosuid,nodev\n' \
       "$smb_password_file" >&2
-    _note "the guest only accepts SMB from SMB_HOST_ADDR ($smb_host_addr) — if this host is not that address on the bridge, the mount will hang"
+    _note "the guest only accepts SMB from SMB_ALLOW ($smb_allow) — if this host is not in that list on the bridge, the mount will hang"
   }
 
   _print_connect_help() {
@@ -569,7 +563,7 @@ main() {
       # bridge, not just the host. The Cloud image ships no packet filter at all,
       # so this is not a hypothetical.
       [[ "$firewall" == "yes" ]] \
-        || _die "SAMBA=yes requires FIREWALL=yes — otherwise port 445 is open to every host on the bridged network, not just SMB_HOST_ADDR ($smb_host_addr)"
+        || _die "SAMBA=yes requires FIREWALL=yes — otherwise port 445 is open to every host on the bridged network, not just SMB_ALLOW ($smb_allow)"
     fi
     # SSH keys: use the files if present. If absent, GENERATE_KEYS=no fails;
     # GENERATE_KEYS=yes (default) creates them — ENCRYPT_KEYS=yes prompts for a
@@ -863,8 +857,9 @@ EOF
     # Drop the read-only guest-diagnostics.sh into the admin user's home. OFF by
     # default: it is a debugging aid, not something every guest should carry.
     [DIAGNOSTICS]="no"
-    [SMB_HOST_ADDR]="192.168.122.1"
-    [FAIL2BAN_IGNOREIP]="127.0.0.1/8 ::1 192.168.122.0/24"
+    [SMB_ALLOW]="192.168.122.1"
+    [SSH_ALLOW]=""
+    [FAIL2BAN_IGNOREIP]="127.0.0.1/8 ::1 192.168.122.1"
     [DOMAIN]="fedora-cloud-01"
     [RAM_MB]="2048"
     [VCPUS]="2"
@@ -915,7 +910,8 @@ EOF
   local samba="${cfg[SAMBA]}"
   local fail2ban="${cfg[FAIL2BAN]}"
   local diagnostics="${cfg[DIAGNOSTICS]}"
-  local smb_host_addr="${cfg[SMB_HOST_ADDR]}"
+  local smb_allow="${cfg[SMB_ALLOW]}"
+  local ssh_allow="${cfg[SSH_ALLOW]}"
   local smb_password_file="${cfg[SMB_PASSWORD_FILE]}"
   local fail2ban_ignoreip="${cfg[FAIL2BAN_IGNOREIP]}"
   # Required (no default); presence is enforced per-command by _require_* below.

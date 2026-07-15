@@ -249,24 +249,19 @@ load helpers
   assert_contains "must not contain whitespace"
 }
 
-@test "validate: SMB_HOST_ADDR must be a bare IPv4, not a CIDR" {
-  run bash "$SCRIPT" --config "$(mkconf "SMB_HOST_ADDR=192.168.122.0/24")" build
-  assert_failure
-  assert_contains "must be a bare IPv4 address"
-  run bash "$SCRIPT" --config "$(mkconf "SMB_HOST_ADDR=host.local")" build
-  assert_failure
-}
-
-@test "validate: SMB_HOST_ADDR range-checks each octet" {
-  # A loose \d{1,3} would wave this through to firewalld, which would then fail at
-  # boot instead of here.
-  run bash "$SCRIPT" --config "$(mkconf "SMB_HOST_ADDR=999.1.1.1")" build
-  assert_failure
-  assert_contains "must be a bare IPv4 address"
-  run bash "$SCRIPT" --config "$(mkconf "SMB_HOST_ADDR=192.168.122.255")" build
+@test "validate: SMB_ALLOW / SSH_ALLOW take space-separated IPs/CIDRs (a list)" {
+  # Both are lists now (feeding rich rules), so multiple entries and CIDRs are
+  # valid; only junk / shell-injection is refused. They share the validator with
+  # FAIL2BAN_IGNOREIP.
+  run bash "$SCRIPT" --config "$(mkconf "SMB_ALLOW=192.168.122.1 10.0.0.0/8")" build
   assert_success
-  run bash "$SCRIPT" --config "$(mkconf "SMB_HOST_ADDR=10.0.0.1")" build
+  run bash "$SCRIPT" --config "$(mkconf "SSH_ALLOW=10.9.9.9 ::1")" build
   assert_success
+  run bash "$SCRIPT" --config "$(mkconf 'SMB_ALLOW=1.2.3.4; rm -rf /')" build
+  assert_failure
+  assert_contains "must be space-separated IPs/CIDRs"
+  run bash "$SCRIPT" --config "$(mkconf "SSH_ALLOW=host.local")" build
+  assert_failure
 }
 
 @test "validate: FAIL2BAN_IGNOREIP takes space-separated IPs/CIDRs only" {

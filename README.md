@@ -203,7 +203,7 @@ with every VM on that network". `build` refuses `SAMBA=yes` with `FIREWALL=no`.
 |---|---|
 | **Protocol** | SMB 3.1.1 floor (`server min protocol = SMB3_11`). SMB1/NT1 gone. |
 | **On the wire** | signing **and** encryption both `required` — so the host must mount with `seal`, or the server refuses the session. |
-| **Who may connect** | firewalld zone `hostonly`, source scoped to `SMB_HOST_ADDR`**`/32`** — the host alone, not the `/24`. Repeated in `smb.conf`'s `hosts allow`. |
+| **Who may connect** | firewalld per-source **rich rules** — 445/tcp only from `SMB_ALLOW` (default the gateway; a list, not the `/24`). Repeated in `smb.conf`'s `hosts allow`. `SSH_ALLOW` optionally scopes ssh the same way. |
 | **What is listening** | only 445. `disable netbios = yes`, so 137/138/139 never open. `nmb` and `winbind` are not enabled. |
 | **Anonymous** | off in every form (`restrict anonymous = 2`, `map to guest = Never`, `null passwords = no`). |
 | **The share** | `valid users` = the standard user only; `browseable = no`; `wide links = no` confines symlink targets to the share root. |
@@ -307,7 +307,7 @@ below create.
 Run every step below **as root on the guest**. The order is not cosmetic — it is
 the same order `runcmd` uses, and getting it wrong is how you take fail2ban down
 or lock yourself out. Replace `appuser` / `192.168.122.1` with your `STD_USER` /
-`SMB_HOST_ADDR` if you changed them.
+`SMB_ALLOW` if you changed them.
 
 **1. Install the packages.**
 
@@ -347,23 +347,28 @@ smbpasswd -e appuser
 testparm -s        # fail loudly here rather than starting a broken server
 ```
 
-**5. Firewall — start, then configure, then reload.** `firewall-cmd --permanent`
-talks to firewalld over D-Bus, so the daemon must be running first — with it
-stopped it fails "FirewallD is not running". Start it, add the permanent rules,
-then `--reload` to apply them. The stock `public` zone already allows SSH, and
-established connections survive a reload, so this cannot drop your session:
+**5. Firewall — start, then add per-source rich rules, then reload.**
+`firewall-cmd --permanent` talks to firewalld over D-Bus, so the daemon must be
+running first (with it stopped it fails "FirewallD is not running"). Add a 445
+rich rule per `SMB_ALLOW` host, then `--reload`. Established connections survive a
+reload, so this cannot drop your session:
 
 ```bash
 systemctl enable --now firewalld
-firewall-cmd --permanent --new-zone=hostonly
-firewall-cmd --permanent --zone=hostonly --add-source=192.168.122.1/32   # the host, /32
-firewall-cmd --permanent --zone=hostonly --add-port=445/tcp
-firewall-cmd --permanent --zone=hostonly --add-service=ssh
+zone="$(firewall-cmd --get-default-zone)"
+# 445/tcp only from your SMB_ALLOW hosts — repeat the rule per source:
+firewall-cmd --permanent --zone="$zone" \
+  --add-rich-rule='rule family="ipv4" source address="192.168.122.1" port port="445" protocol="tcp" accept'
+# OPTIONAL — restrict ssh to your admin IPs (SSH_ALLOW). Only if you administer
+# from those IPs, or you lock yourself out (drop the blanket ssh, then allow):
+#   firewall-cmd --permanent --zone="$zone" --remove-service=ssh
+#   firewall-cmd --permanent --zone="$zone" \
+#     --add-rich-rule='rule family="ipv4" source address="192.168.122.1" service name="ssh" accept'
 firewall-cmd --reload
 ```
 
-(The non-interactive seed instead stages these with `firewall-offline-cmd` while
-firewalld is still stopped, then starts it once — same end state, no reload.)
+(The non-interactive seed stages the same rich rules with `firewall-offline-cmd`
+while firewalld is still stopped, then starts it once — same end state, no reload.)
 
 **6. Start Samba.** Fedora's unit is `smb`, not `smbd`; leave `nmb` and `winbind`
 off (the host mounts by IP, and there is no AD):
@@ -392,7 +397,7 @@ fail2ban-client status                       # expect: sshd, samba-auth, recidiv
 fail2ban-client status samba-auth            # File list: /var/log/samba/auth_audit.log
 fail2ban-regex /var/log/samba/auth_audit.log /etc/fail2ban/filter.d/samba-auth.conf
 grep "no valid date" /var/log/fail2ban.log   # must be empty — else the datepattern is wrong
-firewall-cmd --zone=hostonly --list-all      # source, port 445/tcp, service ssh
+firewall-cmd --list-all                      # the 445 (and any ssh) rich rules
 ```
 
 Then mount it from the host — see [Mounting it on the host](#mounting-it-on-the-host).
@@ -498,10 +503,11 @@ The security features have their own keys:
 |-----|---------|------|
 | `FIREWALL` | `yes` | install + enable firewalld ([the image ships none](#firewall)) |
 | `SAMBA` | `no` | export `~/projects` over SMB3 to the host ([prerequisites](#sharing-projects-with-the-host-samba)) |
-| `SMB_HOST_ADDR` | `192.168.122.1` | the host's bridge address — the **only** source allowed to reach 445 |
+| `SMB_ALLOW` | `192.168.122.1` | list of sources allowed to reach 445 (rich rule + `hosts allow`) |
+| `SSH_ALLOW` | *(empty)* | list of sources allowed to reach ssh; **empty leaves ssh open**, set to restrict |
 | `SMB_PASSWORD_FILE` | `KEYS_DIR/smb-<STD_USER>-<DOMAIN>.cred` | generated SMB credentials, in `mount.cifs` format |
 | `FAIL2BAN` | `no` | install fail2ban (sshd + Samba + recidive jails) |
-| `FAIL2BAN_IGNOREIP` | `127.0.0.1/8 ::1 192.168.122.0/24` | never ban these — **your anti-lockout setting** |
+| `FAIL2BAN_IGNOREIP` | `127.0.0.1/8 ::1 192.168.122.1` | never ban these — **your anti-lockout setting** |
 
 Your personal `fedora-cloud.conf` is git-ignored; only the `.example` is tracked.
 
