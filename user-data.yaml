@@ -145,7 +145,9 @@ write_files:
           server smb encrypt = required
 
           # --- Anonymous / guest access: off, in every form.
-          restrict anonymous = 2        # 2 also blocks anonymous IPC$
+          # 2 also blocks anonymous IPC$ (smb.conf takes no inline comments — a
+          # trailing '# ...' becomes part of the value and breaks the parse).
+          restrict anonymous = 2
           map to guest       = Never
           null passwords     = no
           ntlm auth          = ntlmv2-only
@@ -171,8 +173,10 @@ write_files:
           disable spoolss         = yes
           show add printer wizard = no
 
-          usershare max shares = 0      # no user-defined shares
-          unix extensions      = no     # SMB1-era; irrelevant on SMB3
+          # no user-defined shares
+          usershare max shares = 0
+          # SMB1-era; irrelevant on SMB3
+          unix extensions      = no
 
           # --- Logging. Fedora's default is `log file = log.%m` — ONE FILE PER
           # CLIENT, i.e. no stable path for fail2ban to watch. The `class:level@path`
@@ -358,7 +362,9 @@ write_files:
       # sshd included, stays down permanently.
       [samba-auth]
       enabled  = true
-      backend  = auto   # file-based; Samba does not log to journald here
+      # file-based; Samba does not log to journald here (fail2ban's parser keeps
+      # an inline '# ...' as part of the value, so comments get their own line).
+      backend  = auto
       filter   = samba-auth
       logpath  = /var/log/samba/auth_audit.log
       port     = 445
