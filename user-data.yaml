@@ -390,12 +390,16 @@ runcmd:
   # 5) Firewall. Ordering is the whole game here, and it is safe in this order:
   #      - `dnf install firewalld` (the packages: block above) does NOT start it;
   #        the unit is preset-enabled but stays stopped until we start it.
-  #      - every --permanent rule below is written while the daemon is STOPPED
-  #        (firewall-cmd --permanent writes the config backend directly).
-  #      - when it finally starts it comes up WITH the rules already in place.
+  #      - every rule below is written while the daemon is STOPPED, with
+  #        firewall-offline-cmd — which edits the permanent config on disk
+  #        directly. `firewall-cmd --permanent` can NOT be used here: it talks to
+  #        firewalld over D-Bus and, with the daemon down, fails with "FirewallD
+  #        is not running" (which, under `set -eu`, aborts the whole runcmd).
+  #      - when it finally starts it comes up WITH the rules already in place, so
+  #        there is never a window where firewalld is up but unscoped.
   #      - the stock `public` zone already allows ssh, and firewalld's INPUT chain
-  #        accepts established,related ahead of every zone rule — so neither the
-  #        start nor any later --reload can drop a live SSH session.
+  #        accepts established,related ahead of every zone rule — so the start
+  #        cannot drop a live SSH session.
   #    Outbound is never filtered, so cloud-init's remaining downloads are fine.
   - |
     set -eu
@@ -407,15 +411,15 @@ runcmd:
     #
     # /32 — the host alone. NOT the /24: on a bridged libvirt network every other
     # guest is on that subnet too, and would otherwise be able to mount the share.
-    firewall-cmd --permanent --new-zone=hostonly 2>/dev/null || true  # idempotent
-    firewall-cmd --permanent --zone=hostonly --add-source=PLACEHOLDER_SMB_HOST_ADDR/32
-    firewall-cmd --permanent --zone=hostonly --add-port=445/tcp
+    firewall-offline-cmd --new-zone=hostonly 2>/dev/null || true  # idempotent
+    firewall-offline-cmd --zone=hostonly --add-source=PLACEHOLDER_SMB_HOST_ADDR/32
+    firewall-offline-cmd --zone=hostonly --add-port=445/tcp
     # SSH stays reachable from the default zone too; this only guarantees that if
     # `public` is ever tightened, the host never loses its way in.
-    firewall-cmd --permanent --zone=hostonly --add-service=ssh
+    firewall-offline-cmd --zone=hostonly --add-service=ssh
     #@endif
+    # Comes up reading the permanent config we just staged — no reload needed.
     systemctl enable --now firewalld
-    firewall-cmd --reload
 #@endif
 
 #@if SAMBA

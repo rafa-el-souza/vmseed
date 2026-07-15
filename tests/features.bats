@@ -34,16 +34,22 @@ BRIDGE="NETWORK=bridge=virbr0"
   refute_contains "firewalld" "$(seed_code)"
 }
 
-@test "firewall: permanent rules are written BEFORE the daemon is started" {
+@test "firewall: offline rules are written BEFORE the daemon is started" {
   # Ordering is the whole safety argument: rules first (daemon stopped), then
   # start, so it comes up *with* them. If this inverts, there is a window with a
-  # live firewall and no rules.
+  # live firewall and no rules. The rules MUST use firewall-offline-cmd: with the
+  # daemon stopped, `firewall-cmd --permanent` fails ("FirewallD is not running")
+  # and aborts the whole runcmd.
   bash "$SCRIPT" --config "$(mkconf "$BRIDGE" "SAMBA=yes")" build >/dev/null 2>&1
   local perm start
-  perm="$(grep -n -- '--permanent --zone=hostonly --add-port=445/tcp' "$(ud)" | cut -d: -f1)"
+  perm="$(grep -n -- 'firewall-offline-cmd --zone=hostonly --add-port=445/tcp' "$(ud)" | cut -d: -f1)"
   start="$(grep -n 'systemctl enable --now firewalld' "$(ud)" | cut -d: -f1)"
   [ -n "$perm" ] && [ -n "$start" ]
   [ "$perm" -lt "$start" ]
+  # And no firewall-cmd (D-Bus client) is INVOKED while the daemon is down — a
+  # command line, first non-space token; comments mentioning it don't count.
+  run grep -nE '^[[:space:]]*firewall-cmd ' "$(ud)"
+  [ "$status" -ne 0 ]
 }
 
 # ---------------------------------------------------------- prerequisite guards
