@@ -128,7 +128,7 @@ main() {
   }
 
   _load_config() {  # _load_config <file>  — parse into cfg[]; strict, never sourced
-    local file="$1" lineno=0 line key val
+    local file="$1" lineno=0 line key val rest
     [[ -f "$file" ]] || _die "config file not found: $file"
     [[ -r "$file" ]] || _die "config file not readable: $file"
     while IFS= read -r line || [[ -n "$line" ]]; do
@@ -155,10 +155,17 @@ main() {
       # e.g. STD_KEY_FILE/ADM_KEY_FILE, misbehaved.)
       case "$key" in
         TEMPLATE|KEYS_DIR|STD_KEY_FILE|ADM_KEY_FILE|TMUX_CONF|OVERLAY_IMAGE_DIR|BASE_IMAGE_DIR|OVMF_CODE|NVRAM_PATH|SMB_PASSWORD_FILE)
-          case "$val" in
-            "~")   val="$HOME" ;;
-            "~/"*) val="$HOME/${val#\~/}" ;;
-          esac ;;
+          # Strip a leading '~'; if the value changed, it had one. Done with a
+          # parameter expansion rather than a '~' case pattern so shellcheck does
+          # not misread a quoted tilde as a failed expansion (SC2088).
+          rest="${val#\~}"
+          if [[ "$rest" != "$val" ]]; then
+            case "$rest" in
+              "")  val="$HOME" ;;        # value was exactly '~'
+              /*)  val="$HOME$rest" ;;   # value was '~/...'
+              # otherwise '~something' (e.g. ~user) — leave it untouched
+            esac
+          fi ;;
       esac
       cfg["$key"]="$val"
     done < "$file"
