@@ -1,0 +1,5 @@
+# Guest diagnostic outputs (from tools/guest-diagnostics.sh) land here when
+# brought back from the guest. They are run artifacts, not source — ignore
+# everything in this folder except this file, which keeps the folder present.
+*
+!.gitignore
