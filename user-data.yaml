@@ -137,7 +137,11 @@ write_files:
 
           # --- Signing + encryption, both mandatory. The host must mount with
           # `seal` or the server will refuse the session (that is intended).
+          # `client signing` governs smbd when it acts as an SMB *client* (e.g.
+          # IPC); low relevance for a standalone file server, but CIS lists both,
+          # and it is free.
           server signing     = mandatory
+          client signing     = mandatory
           server smb encrypt = required
 
           # --- Anonymous / guest access: off, in every form.

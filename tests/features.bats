@@ -100,6 +100,7 @@ BRIDGE="NETWORK=bridge=virbr0"
   local s; s="$(seed)"
   assert_contains "server min protocol     = SMB3_11" "$s"   # no SMB1/2
   assert_contains "server signing     = mandatory" "$s"
+  assert_contains "client signing     = mandatory" "$s"      # CIS lists both
   assert_contains "server smb encrypt = required" "$s"
   assert_contains "map to guest       = Never" "$s"
   assert_contains "restrict anonymous = 2" "$s"
