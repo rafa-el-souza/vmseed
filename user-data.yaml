@@ -4,8 +4,8 @@
 #
 # This is a TEMPLATE. The PLACEHOLDER_* tokens are replaced at build time by
 # `fedora-cloud.sh build` — the usernames (STD_USER / ADMIN_USER), the SSH public
-# keys, the base64-encoded tmux config, CRYPTO_POLICY, and the Samba/fail2ban
-# settings. Do not edit those here.
+# keys, the base64-encoded tmux config and diagnostics script, CRYPTO_POLICY, and
+# the Samba/fail2ban settings. Do not edit those here.
 #
 # The `#@if FEATURE` / `#@endif` markers are also a build-time construct: the
 # renderer DELETES the enclosed lines when the feature is off (SAMBA, FIREWALL,
@@ -113,6 +113,19 @@ write_files:
     encoding: b64
     defer: true
     content: "PLACEHOLDER_TMUX_CONF_B64"
+
+#@if DIAGNOSTICS
+  # The read-only guest-diagnostics script, dropped in the admin user's home so
+  # you can `sudo bash ~/guest-diagnostics.sh` after boot. Contents injected from
+  # DIAG_SCRIPT at build time (base64). `defer: true` writes it after the admin
+  # user (and its home) exist; a plain write_files runs before users are created.
+  - path: /home/PLACEHOLDER_ADMIN_USER/guest-diagnostics.sh
+    owner: PLACEHOLDER_ADMIN_USER:PLACEHOLDER_ADMIN_USER
+    permissions: '0755'
+    encoding: b64
+    defer: true
+    content: "PLACEHOLDER_DIAG_SCRIPT_B64"
+#@endif
 
 #@if SAMBA
   # ---- Samba: one share, one client, nothing else -------------------------

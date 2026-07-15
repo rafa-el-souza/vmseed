@@ -18,7 +18,11 @@ OUT=/tmp/vmseed-diag.txt
 exec > >(tee "$OUT") 2>&1
 
 sec() { printf '\n\n========== %s ==========\n' "$*"; }
-run() { printf '\n$ %s\n' "$*"; eval "$@" 2>&1; printf '  [exit %s]\n' "$?"; }
+# Each probe is a fixed command string containing pipes/redirections, so it needs
+# shell evaluation (a bare "$@" would treat "cmd | tail" as one literal command).
+# bash -c runs it in an isolated subshell — no eval, and a stray cd/set in one
+# probe can't leak into the next. The strings are all hardcoded here, never input.
+run() { printf '\n$ %s\n' "$*"; bash -c "$*" 2>&1; printf '  [exit %s]\n' "$?"; }
 
 # STD_USER is 'appuser' unless the build overrode it; detect the share owner.
 SHARE_DIR="$(ls -d /home/*/projects 2>/dev/null | head -1)"

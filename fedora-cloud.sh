@@ -56,11 +56,11 @@ main() {
   # ---- config: known keys, per-key validation, strict KEY=VALUE parser ----
   _is_known_key() {
     case "$1" in
-      TEMPLATE|KEYS_DIR|STD_KEY_FILE|ADM_KEY_FILE|TMUX_CONF|OVERLAY_IMAGE_DIR|\
+      TEMPLATE|KEYS_DIR|STD_KEY_FILE|ADM_KEY_FILE|TMUX_CONF|DIAG_SCRIPT|OVERLAY_IMAGE_DIR|\
       BASE_IMAGE_DIR|STD_USER|ADMIN_USER|GENERATE_KEYS|ENCRYPT_KEYS|SEED_METHOD|\
       CRYPTO_POLICY|INSTANCE_ID|VM_HOSTNAME|DOMAIN|RAM_MB|VCPUS|LIBVIRT_URI|NETWORK|OSINFO|\
       OVMF_CODE|NVRAM_PATH|TPM|IMAGE_VARIANT|VER|ARCH|FEDORA_GPG_URL|CHECKSUM_URL|COMPOSE|\
-      FIREWALL|SAMBA|FAIL2BAN|SMB_HOST_ADDR|SMB_PASSWORD_FILE|FAIL2BAN_IGNOREIP) return 0 ;;
+      FIREWALL|SAMBA|FAIL2BAN|DIAGNOSTICS|SMB_HOST_ADDR|SMB_PASSWORD_FILE|FAIL2BAN_IGNOREIP) return 0 ;;
       *) return 1 ;;
     esac
   }
@@ -83,7 +83,7 @@ main() {
         [[ "$val" =~ ^[a-z]+(\+[a-z]+)?:// ]] || _die "$where must be a libvirt URI (e.g. qemu:///session)" ;;
       DOMAIN|INSTANCE_ID|VM_HOSTNAME)
         [[ "$val" =~ ^[A-Za-z0-9._-]+$ ]] || _die "$where may contain only [A-Za-z0-9._-], got '$val'" ;;
-      GENERATE_KEYS|ENCRYPT_KEYS|TPM|FIREWALL|SAMBA|FAIL2BAN)
+      GENERATE_KEYS|ENCRYPT_KEYS|TPM|FIREWALL|SAMBA|FAIL2BAN|DIAGNOSTICS)
         [[ "$val" =~ ^(yes|no)$ ]] || _die "$where must be 'yes' or 'no', got '$val'" ;;
       SMB_HOST_ADDR)
         # A single IPv4 literal (the host's address on the libvirt bridge). The
@@ -122,7 +122,7 @@ main() {
         [[ "$val" =~ ^[A-Za-z0-9=,._:-]+$ ]] || _die "$where has invalid characters: '$val'" ;;
       NETWORK)
         [[ "$val" =~ ^[A-Za-z0-9=,._:/-]+$ ]] || _die "$where has invalid characters: '$val'" ;;
-      TEMPLATE|KEYS_DIR|STD_KEY_FILE|ADM_KEY_FILE|TMUX_CONF|OVERLAY_IMAGE_DIR|BASE_IMAGE_DIR|OVMF_CODE|NVRAM_PATH|SMB_PASSWORD_FILE)
+      TEMPLATE|KEYS_DIR|STD_KEY_FILE|ADM_KEY_FILE|TMUX_CONF|DIAG_SCRIPT|OVERLAY_IMAGE_DIR|BASE_IMAGE_DIR|OVMF_CODE|NVRAM_PATH|SMB_PASSWORD_FILE)
         [[ "$val" != *[[:space:]]* ]] || _die "$where (a path) must not contain whitespace" ;;
     esac
   }
@@ -154,7 +154,7 @@ main() {
       # directly and so was never affected — which is why only config-set paths,
       # e.g. STD_KEY_FILE/ADM_KEY_FILE, misbehaved.)
       case "$key" in
-        TEMPLATE|KEYS_DIR|STD_KEY_FILE|ADM_KEY_FILE|TMUX_CONF|OVERLAY_IMAGE_DIR|BASE_IMAGE_DIR|OVMF_CODE|NVRAM_PATH|SMB_PASSWORD_FILE)
+        TEMPLATE|KEYS_DIR|STD_KEY_FILE|ADM_KEY_FILE|TMUX_CONF|DIAG_SCRIPT|OVERLAY_IMAGE_DIR|BASE_IMAGE_DIR|OVMF_CODE|NVRAM_PATH|SMB_PASSWORD_FILE)
           # Strip a leading '~'; if the value changed, it had one. Done with a
           # parameter expansion rather than a '~' case pattern so shellcheck does
           # not misread a quoted tilde as a failed expansion (SC2088).
@@ -248,7 +248,7 @@ main() {
     printf '%s\n' "$pw"
   }
 
-  _render_user_data() {  # <std_key> <adm_key> <tmux_b64> <smb_pass> <feats>
+  _render_user_data() {  # <std_key> <adm_key> <tmux_b64> <smb_pass> <feats> <diag_b64>
     # Two passes in one: drop the blocks whose feature is off, then substitute the
     # PLACEHOLDER_* tokens in what survives.
     #
@@ -259,9 +259,10 @@ main() {
     # awk (not sed) so special chars in a value can't break substitution. The
     # replacement text is passed literally — gsub's target is a fixed string here,
     # and no value can contain awk's '&' backreference character (the SSH keys and
-    # the tmux base64 are base64 alphabets; the password is generated alphanumeric;
-    # the rest are validated by _validate_value).
+    # the tmux/diagnostics base64 are base64 alphabets; the password is generated
+    # alphanumeric; the rest are validated by _validate_value).
     awk -v std="$1" -v adm="$2" -v tmux="$3" -v smbpass="$4" -v feats="$5" \
+        -v diag="$6" \
         -v su="$std_user" -v au="$admin_user" -v crypto="$crypto_policy" \
         -v smbhost="$smb_host_addr" -v f2bignore="$fail2ban_ignoreip" '
       function on(cond,   n, i, part) {   # every feature in "A,B" must be enabled
@@ -290,6 +291,7 @@ main() {
         gsub(/PLACEHOLDER_STANDARD_KEY/, std)
         gsub(/PLACEHOLDER_ADMIN_KEY/, adm)
         gsub(/PLACEHOLDER_TMUX_CONF_B64/, tmux)
+        gsub(/PLACEHOLDER_DIAG_SCRIPT_B64/, diag)
         gsub(/PLACEHOLDER_STD_USER/, su)
         gsub(/PLACEHOLDER_ADMIN_USER/, au)
         gsub(/PLACEHOLDER_CRYPTO_POLICY/, crypto)
@@ -583,11 +585,20 @@ main() {
     # template) so multi-line content can't break YAML indentation.
     tmux_b64="$(base64 -w0 < "$tmux_conf")"
 
+    # Same base64 treatment for the diagnostics script, but only when it's asked
+    # for — its block (and PLACEHOLDER_DIAG_SCRIPT_B64) is stripped otherwise.
+    local diag_b64=""
+    if [[ "$diagnostics" == "yes" ]]; then
+      [[ -f "$diag_script" ]] || _die "DIAGNOSTICS=yes but script not found: $diag_script"
+      diag_b64="$(base64 -w0 < "$diag_script")"
+    fi
+
     # The comma-wrapped list of enabled features drives the template's #@if blocks.
     local feats=","
-    [[ "$firewall" == "yes" ]] && feats+="FIREWALL,"
-    [[ "$samba"    == "yes" ]] && feats+="SAMBA,"
-    [[ "$fail2ban" == "yes" ]] && feats+="FAIL2BAN,"
+    [[ "$firewall"    == "yes" ]] && feats+="FIREWALL,"
+    [[ "$samba"       == "yes" ]] && feats+="SAMBA,"
+    [[ "$fail2ban"    == "yes" ]] && feats+="FAIL2BAN,"
+    [[ "$diagnostics" == "yes" ]] && feats+="DIAGNOSTICS,"
 
     # Only reachable when SAMBA=yes; otherwise the placeholder is stripped with its
     # block and the seed never sees a password.
@@ -601,7 +612,7 @@ main() {
     # 0600 from the start: with SAMBA=yes the rendered user-data carries the SMB
     # password, so it must never exist world-readable, not even briefly.
     ( umask 077; : > "$seed_dir/user-data" )
-    _render_user_data "$std_key" "$adm_key" "$tmux_b64" "$smb_pass" "$feats" > "$seed_dir/user-data"
+    _render_user_data "$std_key" "$adm_key" "$tmux_b64" "$smb_pass" "$feats" "$diag_b64" > "$seed_dir/user-data"
     printf 'instance-id: %s\nlocal-hostname: %s\n' "$instance_id" "$vm_hostname" > "$seed_dir/meta-data"
 
     _validate_seed "$seed_dir/user-data"
@@ -831,6 +842,7 @@ EOF
   local -A cfg=(
     [TEMPLATE]="$script_dir/user-data.yaml"
     [TMUX_CONF]="$script_dir/dotfiles/tmux.conf"
+    [DIAG_SCRIPT]="$script_dir/tools/guest-diagnostics.sh"
     [KEYS_DIR]="$HOME/.ssh"
     [STD_USER]="appuser"
     [ADMIN_USER]="admin"
@@ -848,6 +860,9 @@ EOF
     [FIREWALL]="yes"
     [SAMBA]="no"
     [FAIL2BAN]="no"
+    # Drop the read-only guest-diagnostics.sh into the admin user's home. OFF by
+    # default: it is a debugging aid, not something every guest should carry.
+    [DIAGNOSTICS]="no"
     [SMB_HOST_ADDR]="192.168.122.1"
     [FAIL2BAN_IGNOREIP]="127.0.0.1/8 ::1 192.168.122.0/24"
     [DOMAIN]="fedora-cloud-01"
@@ -887,6 +902,7 @@ EOF
   # Project the validated config into readable locals used by the commands.
   local template="${cfg[TEMPLATE]}"
   local tmux_conf="${cfg[TMUX_CONF]}"
+  local diag_script="${cfg[DIAG_SCRIPT]}"
   local std_user="${cfg[STD_USER]}"
   local admin_user="${cfg[ADMIN_USER]}"
   local generate_keys="${cfg[GENERATE_KEYS]}"
@@ -898,6 +914,7 @@ EOF
   local firewall="${cfg[FIREWALL]}"
   local samba="${cfg[SAMBA]}"
   local fail2ban="${cfg[FAIL2BAN]}"
+  local diagnostics="${cfg[DIAGNOSTICS]}"
   local smb_host_addr="${cfg[SMB_HOST_ADDR]}"
   local smb_password_file="${cfg[SMB_PASSWORD_FILE]}"
   local fail2ban_ignoreip="${cfg[FAIL2BAN_IGNOREIP]}"

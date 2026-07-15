@@ -334,6 +334,41 @@ BRIDGE="NETWORK=bridge=virbr0"
   assert_contains "auth_audit:3@/var/log/samba/auth_audit.log" "$(seed)"
 }
 
+# ----------------------------------------------------------------- diagnostics
+
+@test "diagnostics: OFF by default — nothing shipped, no placeholder left behind" {
+  bash "$SCRIPT" --config "$(mkconf)" build >/dev/null 2>&1
+  refute_contains "guest-diagnostics.sh" "$(seed_code)"
+  refute_contains "PLACEHOLDER_DIAG_SCRIPT_B64" "$(seed)"
+}
+
+@test "diagnostics: DIAGNOSTICS=yes drops the script in the admin user's home" {
+  bash "$SCRIPT" --config "$(mkconf "DIAGNOSTICS=yes" "ADMIN_USER=ops")" build >/dev/null 2>&1
+  local s; s="$(seed)"
+  assert_contains "path: /home/ops/guest-diagnostics.sh" "$s"
+  assert_contains "owner: ops:ops" "$s"
+  assert_contains "permissions: '0755'" "$s"
+  # deferred, so it writes after the admin user's home exists
+  assert_contains "defer: true" "$s"
+  # the placeholder is fully substituted with the base64 of the shipped script
+  refute_contains "PLACEHOLDER_DIAG_SCRIPT_B64" "$s"
+  local want; want="$(base64 -w0 < "$(dirname "$SCRIPT")/tools/guest-diagnostics.sh")"
+  assert_contains "$want" "$s"
+}
+
+@test "diagnostics: DIAG_SCRIPT relocates the source that gets injected" {
+  printf '#!/bin/sh\necho MARKER_DIAG\n' > "$TMP/my-diag.sh"
+  bash "$SCRIPT" --config "$(mkconf "DIAGNOSTICS=yes" "DIAG_SCRIPT=$TMP/my-diag.sh")" build >/dev/null 2>&1
+  local want; want="$(base64 -w0 < "$TMP/my-diag.sh")"
+  assert_contains "$want" "$(seed)"
+}
+
+@test "diagnostics: DIAGNOSTICS=yes with a missing DIAG_SCRIPT is a build error" {
+  run bash "$SCRIPT" --config "$(mkconf "DIAGNOSTICS=yes" "DIAG_SCRIPT=$TMP/nope.sh")" build
+  assert_failure
+  assert_contains "script not found"
+}
+
 # ------------------------------------------------------------------- ~/projects
 
 @test "projects: the directory is created even when nothing is ever exported" {
