@@ -162,10 +162,9 @@ write_files:
           # trailing '# ...' becomes part of the value and breaks the parse).
           restrict anonymous = 2
           map to guest       = Never
-          null passwords     = no
           ntlm auth          = ntlmv2-only
-          lanman auth        = no
-          raw NTLMv2 auth    = no
+          # (null passwords / lanman auth / raw NTLMv2 auth are Samba's secure
+          # default now and were deprecated, so they are not set here.)
 
           # --- Network exposure. The host mounts by IP, so NetBIOS is pure
           # attack surface: 137/138/139 stay shut and only 445 listens.
