@@ -297,6 +297,18 @@ BRIDGE="NETWORK=bridge=virbr0"
   [ "$touch_ln" -lt "$start_ln" ]
 }
 
+@test "fail2ban: waits for the server socket before the status check" {
+  # systemctl --now returns before fail2ban-server opens its socket, so a bare
+  # `fail2ban-client status` races it and logs a false "socket not found" on every
+  # boot. The readiness wait must come first.
+  bash "$SCRIPT" --config "$(mkconf "FAIL2BAN=yes")" build >/dev/null 2>&1
+  local wait_ln status_ln
+  wait_ln="$(grep -n 'fail2ban-client ping' "$(ud)" | cut -d: -f1)"
+  status_ln="$(grep -n 'fail2ban-client status || journalctl' "$(ud)" | cut -d: -f1)"
+  [ -n "$wait_ln" ] && [ -n "$status_ln" ]
+  [ "$wait_ln" -lt "$status_ln" ]
+}
+
 # ------------------------------------------------- fail2ban x samba interaction
 
 @test "fail2ban+samba: the samba jail NEVER appears without samba installed" {
