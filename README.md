@@ -297,12 +297,12 @@ hand. But if you want the *same* configuration on an **already-running Fedora
 guest** — you enabled the features after the fact, or you are retrofitting an
 existing VM — you can apply the rendered files directly.
 
-The source is the `guest-preview/` tree, whose paths mirror the guest's root
-(`guest-preview/etc/samba/smb.conf` → `/etc/samba/smb.conf`). Produce it by
-running `build` with `SAMBA=yes FIREWALL=yes FAIL2BAN=yes` and extracting the
-`write_files` entries, or write the files out from this repo's `user-data.yaml`
-by hand — either way, see `guest-preview/README.md` for exactly which files are
-verbatim and which are reconstructed.
+The source is the rendered `user-data`. Build with
+`SAMBA=yes FIREWALL=yes FAIL2BAN=yes` and materialise each `write_files` entry into
+a tree that mirrors the guest root — its `path:` is the guest path (e.g.
+`etc/samba/smb.conf` → the guest's `/etc/samba/smb.conf`). The firewalld zone and
+the pre-created log files are not `write_files`; they are what the `runcmd` steps
+below create.
 
 Run every step below **as root on the guest**. The order is not cosmetic — it is
 the same order `runcmd` uses, and getting it wrong is how you take fail2ban down
@@ -316,11 +316,10 @@ dnf install -y firewalld samba samba-common-tools \
   policycoreutils-python-utils fail2ban-server
 ```
 
-**2. Copy the config files into place.** From the `guest-preview/` tree (it keeps
-the right modes; `--preserve=mode` carries them over):
+**2. Copy the config files into place** (from the tree you materialised above; the
+modes are 0644):
 
 ```bash
-cd guest-preview
 install -D -m 0644 etc/samba/smb.conf                       /etc/samba/smb.conf
 install -D -m 0644 etc/fail2ban/jail.d/10-vmseed.local      /etc/fail2ban/jail.d/10-vmseed.local
 install -D -m 0644 etc/fail2ban/jail.d/20-samba.local       /etc/fail2ban/jail.d/20-samba.local

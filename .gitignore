@@ -2,9 +2,6 @@
 /fedora-cloud.conf
 /temp/
 
-# Inspection-only render of the guest's files (see guest-preview/README.md)
-/guest-preview/
-
 # OVERLAY_IMAGE_DIR and BASE_IMAGE_DIR are configured (no default) and expected
 # outside the repo. Never commit key material or images regardless of location.
 *.pem
