@@ -92,10 +92,15 @@ BASE_IMAGE_DIR=/var/lib/fedora-cloud/base
 #                                      # The guest's Unix accounts stay password-less: Samba
 #                                      # authenticates from its own passdb (tdbsam) and never
 #                                      # reads /etc/shadow.
-# SMB_HOST_ADDR=192.168.122.1          # the HOST's address on the libvirt bridge — the only
-#                                      # source allowed to reach port 445 (firewalld scopes it
-#                                      # to /32, and smb.conf's `hosts allow` repeats it). A bare
-#                                      # IPv4, not a CIDR. Check yours: `ip -4 addr show virbr0`.
+# SMB_ALLOW=192.168.122.1              # space-separated list of sources allowed to reach port 445
+#                                      # (firewalld per-source rich rule + smb.conf `hosts allow`).
+#                                      # Default = the bridge gateway. IPs/CIDRs; add more clients
+#                                      # as needed. Check yours: `ip -4 addr show virbr0`.
+# SSH_ALLOW=                           # space-separated sources allowed to reach ssh. EMPTY (the
+#                                      # default) leaves ssh OPEN. Set it to restrict ssh to those
+#                                      # sources (rich rule; the blanket ssh is dropped from the
+#                                      # default zone). LOCKOUT: keep every IP you admin from here
+#                                      # AND in FAIL2BAN_IGNOREIP, and keep console access.
 # SMB_PASSWORD_FILE=~/.ssh/smb-appuser-fedora-cloud-01.cred
 #                                      # defaults to KEYS_DIR/smb-<STD_USER>-<DOMAIN>.cred.
 #                                      # Generated (0600) on the first `build` with SAMBA=yes, in
@@ -111,10 +116,12 @@ BASE_IMAGE_DIR=/var/lib/fedora-cloud/base
 #                                      # buys: with key-only SSH and 445 already scoped to one
 #                                      # source IP, the firewall and the key policy are doing the
 #                                      # real work. This is defence-in-depth and log hygiene.
-# FAIL2BAN_IGNOREIP=127.0.0.1/8 ::1 192.168.122.0/24
-#                                      # never ban these. Keep your own subnet in here — this is
-#                                      # what stops fail2ban locking YOU out. Recover from the
-#                                      # serial console: `fail2ban-client unban --all`.
+# FAIL2BAN_IGNOREIP=127.0.0.1/8 ::1 192.168.122.1
+#                                      # never ban these. Default = loopback + the gateway (a small
+#                                      # trusted set, so the sshd jail still bites everyone else).
+#                                      # Keep every IP you admin from here — this is what stops
+#                                      # fail2ban locking YOU out. Recover from the serial console:
+#                                      # `fail2ban-client unban --all`.
 #
 # DIAGNOSTICS=no                       # drop the read-only guest-diagnostics.sh (DIAG_SCRIPT) into
 #                                      # the admin user's home, so after boot you can run

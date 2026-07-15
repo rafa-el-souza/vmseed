@@ -79,7 +79,7 @@ run "rpm -q firewalld"
 run "systemctl is-active firewalld"
 run "firewall-cmd --state"
 run "firewall-cmd --get-active-zones"
-run "firewall-cmd --zone=hostonly --list-all"
+run "firewall-cmd --list-all"                # default zone: the 445 (and any ssh) rich rules
 
 sec "SAMBA"
 run "rpm -q samba"
