@@ -288,6 +288,112 @@ virsh --connect qemu:///session console <DOMAIN>   # Ctrl+] to exit
 sudo fail2ban-client unban --all
 ```
 
+## Applying the Samba / firewall / fail2ban files to a running system
+
+Normally cloud-init lays these down on first boot and you never touch them by
+hand. But if you want the *same* configuration on an **already-running Fedora
+guest** — you enabled the features after the fact, or you are retrofitting an
+existing VM — you can apply the rendered files directly.
+
+The source is the `guest-preview/` tree, whose paths mirror the guest's root
+(`guest-preview/etc/samba/smb.conf` → `/etc/samba/smb.conf`). Produce it by
+running `build` with `SAMBA=yes FIREWALL=yes FAIL2BAN=yes` and extracting the
+`write_files` entries, or write the files out from this repo's `user-data.yaml`
+by hand — either way, see `guest-preview/README.md` for exactly which files are
+verbatim and which are reconstructed.
+
+Run every step below **as root on the guest**. The order is not cosmetic — it is
+the same order `runcmd` uses, and getting it wrong is how you take fail2ban down
+or lock yourself out. Replace `appuser` / `192.168.122.1` with your `STD_USER` /
+`SMB_HOST_ADDR` if you changed them.
+
+**1. Install the packages.**
+
+```bash
+dnf install -y firewalld samba samba-common-tools \
+  policycoreutils-python-utils fail2ban-server
+```
+
+**2. Copy the config files into place.** From the `guest-preview/` tree (it keeps
+the right modes; `--preserve=mode` carries them over):
+
+```bash
+cd guest-preview
+install -D -m 0644 etc/samba/smb.conf                       /etc/samba/smb.conf
+install -D -m 0644 etc/fail2ban/jail.d/10-vmseed.local      /etc/fail2ban/jail.d/10-vmseed.local
+install -D -m 0644 etc/fail2ban/jail.d/20-samba.local       /etc/fail2ban/jail.d/20-samba.local
+install -D -m 0644 etc/fail2ban/fail2ban.d/10-vmseed.local  /etc/fail2ban/fail2ban.d/10-vmseed.local
+install -D -m 0644 etc/fail2ban/filter.d/samba-auth.conf    /etc/fail2ban/filter.d/samba-auth.conf
+```
+
+**3. Create the share directory and label it for SELinux.** The label — not the
+`samba_enable_home_dirs` boolean — is the least-privilege choice (see
+[the Samba section](#sharing-projects-with-the-host-samba)):
+
+```bash
+install -d -o appuser -g appuser -m 0750 /home/appuser/projects
+semanage fcontext -a -t samba_share_t '/home/appuser/projects(/.*)?'
+restorecon -Rv /home/appuser/projects
+```
+
+**4. Give the Samba user a password.** The Unix account stays password-less; this
+is a separate tdbsam credential. Pick your own — this is the password the host
+will mount with, so put the same value in the host's credentials file:
+
+```bash
+printf '%s\n%s\n' "$SMB_PASSWORD" "$SMB_PASSWORD" | smbpasswd -s -a appuser
+smbpasswd -e appuser
+testparm -s        # fail loudly here rather than starting a broken server
+```
+
+**5. Firewall — configure, then start, then reload.** `--permanent` writes the
+config whether or not the daemon is running; starting it afterwards brings it up
+*with* the rules already present. The stock `public` zone already allows SSH, and
+established connections survive, so this cannot drop your session:
+
+```bash
+firewall-cmd --permanent --new-zone=hostonly
+firewall-cmd --permanent --zone=hostonly --add-source=192.168.122.1/32   # the host, /32
+firewall-cmd --permanent --zone=hostonly --add-port=445/tcp
+firewall-cmd --permanent --zone=hostonly --add-service=ssh
+systemctl enable --now firewalld
+firewall-cmd --reload
+```
+
+**6. Start Samba.** Fedora's unit is `smb`, not `smbd`; leave `nmb` and `winbind`
+off (the host mounts by IP, and there is no AD):
+
+```bash
+systemctl enable --now smb
+```
+
+**7. Pre-create the log files, THEN start fail2ban — in that order.** A jail whose
+logpath is missing makes fail2ban exit 255, and its unit sets
+`RestartPreventExitStatus=0 255`, so systemd never retries and *every* jail stays
+down. The `recidive` jail watches fail2ban's own log, which does not exist yet:
+
+```bash
+install -d -m 0755 /var/log/samba
+touch /var/log/samba/auth_audit.log /var/log/fail2ban.log
+chmod 0640 /var/log/fail2ban.log
+restorecon -Rv /var/log/samba /var/log/fail2ban.log
+systemctl enable --now fail2ban
+```
+
+**8. Verify.** All three jails up, and the Samba filter parsing dates cleanly:
+
+```bash
+fail2ban-client status                       # expect: sshd, samba-auth, recidive
+fail2ban-client status samba-auth            # File list: /var/log/samba/auth_audit.log
+fail2ban-regex /var/log/samba/auth_audit.log /etc/fail2ban/filter.d/samba-auth.conf
+grep "no valid date" /var/log/fail2ban.log   # must be empty — else the datepattern is wrong
+firewall-cmd --zone=hostonly --list-all      # source, port 445/tcp, service ssh
+```
+
+Then mount it from the host — see [Mounting it on the host](#mounting-it-on-the-host).
+If the mount returns `EACCES`, it is SELinux, not the firewall: check
+`ausearch -m AVC -ts recent` before touching any boolean.
+
 ## Tests
 
 A [bats](https://github.com/bats-core/bats-core) suite (135 tests) runs the CLI as
