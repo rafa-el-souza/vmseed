@@ -781,6 +781,8 @@ def _outcome_problems(finding: Finding, questions: dict[str, Question]) -> list[
         problems.append("not reproduced means a test was written first: not inspection")
     if kind == "fixed" and finding.plan == "record" and not finding.picked:
         problems.append("a finding planned record is fixed only if the user picked it")
+    if finding.picked and kind != "fixed":
+        problems.append(f"the user picked it, so it ends fixed, not {kind}")
     if (
         kind == "fixed"
         and finding.evidence == "inspection"

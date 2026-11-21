@@ -337,6 +337,16 @@ def test_check_refuses_picked_on_a_finding_planned_fix() -> None:
     assert refused(with_finding(0, picked=True), "picked is for a finding planned")
 
 
+def test_check_refuses_a_picked_finding_that_is_not_fixed() -> None:
+    document = with_finding(3, picked=True)
+
+    assert refused(document, "the user picked it, so it ends fixed")
+
+
+def test_a_picked_finding_waiting_for_its_fix_passes_check() -> None:
+    assert refusals(with_finding(3, picked=True, outcome="")) == []
+
+
 def test_check_refuses_a_fix_that_rests_on_inspection_alone() -> None:
     assert refused(with_finding(0, evidence="inspection"), "fixed on inspection alone")
 

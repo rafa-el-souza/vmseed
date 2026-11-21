@@ -357,7 +357,9 @@ A finding is open while `outcome` is empty.
 | `record` | `recorded: forced path (<path>)`; `recorded: no effect`; or `fixed` with `picked = true` when the user chose it |
 
 A finding closed as `fixed` has `test`, `ci` or `verified` as evidence, unless
-the user decided the fix in a question or picked it.
+the user decided the fix in a question or picked it. A finding the user
+picked ends `fixed`: until then its outcome stays empty, so it keeps the
+record open.
 
 ### The tool
 
