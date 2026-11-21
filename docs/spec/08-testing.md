@@ -86,8 +86,8 @@ Notes for CI runners:
 Missing tool policy: locally a missing tool skips its tests with a visible
 reason. In CI, `VMSEED_REQUIRE_TOOLS=1` turns a missing tool into a failure.
 
-Dev VM gap: `virt-xml-validate` is not installed. The user is asked to install
-`libvirt-client` (see `STATUS.md`).
+`virt-xml-validate` comes from `libvirt-client`, present on the dev VM since
+2026-11-21.
 
 ### Tier 3: end to end
 
@@ -178,19 +178,26 @@ self-hosted runner on the user's host is never attached to this repository.
 | Workflow | Trigger | Jobs |
 |---|---|---|
 | `ci` | push, pull request | format, lint, type-check, unit and golden, contract; Python 3.12, 3.13, 3.14; generated-docs staleness check |
-| `approval` | pull request to `v2` and `main` | one job bound to the `merge-approval` environment, which waits for the owner (see 09, M0) |
+| `approval` | pull request to `v2` and `main` | `review-record`, which checks the milestone's findings file (see 11); then `approve`, which needs it and is bound to the `merge-approval` environment, where it waits for the owner (see 09, M0) |
 | `e2e` | pull request to `v2` and `main`, manual | the e2e matrix |
 | `e2e-full` | schedule (weekly), manual | the matrix with default configuration |
 | `catalog` | schedule (weekly), manual | the refresh tool, run from the protected branch; opens a PR |
 | `catalog-check` | pull request touching the catalog, keys or tool | recomputes digests with the base branch's tool, without checking out the PR's code |
 
 Workflows pin actions by commit SHA, request the minimum token permissions,
-and hold no long-lived secret.
+and hold no long-lived secret. A new push to a pull request cancels the runs
+of the previous push.
+
+The `review-record` job is red on a milestone's pull request until its review
+is closed, so the owner is asked for approval once, when there is something to
+approve. On a branch that is not a milestone's, it passes and says that no
+record is required.
 
 ## Rules
 
 - A test name says what behaviour it protects.
-- A bug fix starts with a test that reproduces the bug.
+- A bug fix starts with a test that reproduces the bug. A review finding is
+  fixed the same way (see 11).
 - No test depends on the developer's home directory, SSH keys or fleet file.
 - e2e never runs against a libvirt URI other than the one the job set up.
 - Never mark something as verified end to end without a CI run to cite.

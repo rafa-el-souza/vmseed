@@ -32,10 +32,11 @@ Checked directly, on the dev VM or in the primary source.
 | V-URI-CMD | A libvirt URI can name a program to run (`ext` and `ssh` transports) | libvirt URI reference, read 2026-11-21 |
 | V-PASST-FWD | A passt interface with a forward on `127.0.0.1` gives working SSH in session mode, and the guest can reach host loopback services | Measured by the author on a Fedora 44 host, libvirt 12.0.0, 2026-10-13 |
 | V-GH-PERMS | For a fine-grained token: merging a pull request needs Contents write; approving a pending deployment needs Deployments write; dispatching a workflow needs Actions write | GitHub permissions reference, read 2026-11-21 |
+| V-GH-TOKEN | The dev VM's token is fine-grained and limited to this repository: it can write contents and pull requests, and is refused for administration, deployments, commit statuses, Actions writes, secrets, variables and webhooks. The workflow permission cannot be probed without changing a workflow, so M0 proves it | Read requests, and write requests built to fail validation, 2026-11-21 |
 | V-GH-CLOUD | Since 2026-10-28 standard Linux runners may run on a second cloud; nothing is stated about KVM there | GitHub changelog, read 2026-11-21 |
 | V-NAMES | Upstream file names and release numbers in 06 | Mirrors read on 2026-11-20 |
 
-## Infrastructure
+## Infrastructure and process
 
 | ID | Statement | Support so far | Verify | If false |
 |---|---|---|---|---|
@@ -44,6 +45,10 @@ Checked directly, on the dev VM or in the primary source.
 | A-CI-USERNS | The runner's restriction on unprivileged user namespaces can be relaxed by the job | Reported | M0 | Run the namespace tests with `sudo` |
 | A-CI-TIME | A PR's e2e matrix fits in about 20 minutes | None | M3, M6 | A small set per PR, the rest scheduled |
 | A-GH-GATE | A required deployment to an environment with a required reviewer blocks merging until the owner approves, and the session's token cannot approve | V-GH-PERMS | M0, with a throwaway PR | A separate machine account as PR author with required approval; or the user merges by hand. Ask the user. |
+| A-GH-UNATTR | The ruleset option that asks for an extra approval on unattributed changes does not block a pull request opened with the owner's token while zero approvals are required | GitHub's rules reference: it adds one approval to a pull request opened by Copilot, and only when approvals are required. Third-party reports disagree | M0, with the throwaway PR | Turn the option off in the ruleset |
+| A-REV-GATE | The approval request can be made to wait for the review record: `approve` needs `review-record`, so no deployment is requested before the record is closed | The `needs` rule of GitHub Actions | M0 | The gate becomes advisory: the user checks the record before approving |
+| A-REV-WORKTREE | On the dev VM a reviewer agent can work in a git worktree of its own, with its own virtual environment, within the disk and memory available | uv links packages from its cache | M0's review | The reviewer writes no test; the review session runs the reproductions it proposes, one at a time |
+| A-REV-YIELD | Fixing only what the scale of 11 plans as `fix` leaves no defect that matters unfixed | None measured on this project | The counts at M3 and at M9, and any later defect traced to a finding that was only recorded | Widen the lists, by the user's decision |
 
 ## Hypervisor and host
 
@@ -112,7 +117,6 @@ Checked directly, on the dev VM or in the primary source.
 
 | ID | Question | Owner | Blocks |
 |---|---|---|---|
-| Q-REVIEW | Which review scheme per milestone? The user will send a description. | User | Nothing: a provisional process is in 09 |
 | Q-CRED | With one account, two limits remain: while the token may change workflows a pull request could fabricate the approval, and release tags cannot be protected from the token. A separate machine account would close both. | User | Nothing: M0 starts with the single-account setup |
 | Q-PYPI | Publish to PyPI, and under which name? The name's availability has not been checked. | User | Nothing until after 1.0.0 |
 | Q-PTRACE | Does `ptrace_scope = 1` need a knob for developer sandboxes? | Decide after real use | Nothing |

@@ -68,7 +68,7 @@ src/vmseed/
   ops/                   create.py, verify.py, destroy.py, listing.py, render.py, ...
   data/catalog.toml
 tests/   unit/  golden/  contract/  e2e/
-tools/refresh_catalog.py
+tools/   refresh_catalog.py   findings.py (the review record, see 11)
 examples/ quickstart/  sandbox/
 ```
 

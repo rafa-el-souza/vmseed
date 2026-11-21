@@ -1,8 +1,8 @@
 # 00. Overview
 
 Status: agreed with the user on 2026-11-20; revised on 2026-11-21 after two
-independent design reviews (technical soundness, and security). Changes go
-through an ADR.
+independent design reviews (technical soundness, and security); the review of
+each milestone was decided on 2026-11-21. Changes go through an ADR.
 
 ## What vmseed is
 
@@ -99,6 +99,9 @@ the job of the operator's own tools (`virsh`, virt-manager, or a script).
 | Adopted VM | An existing VM declared with `managed = false`: listed and verifiable, never created or destroyed. |
 | Operator tool | Whatever runs the VM day to day. |
 | Host-check batch | A short script of commands the user runs on the real host at a milestone. |
+| Build session | The session that implements a milestone and opens its pull request. |
+| Review session | A separate session that reviews a milestone's pull request, fixes what the rule says and closes the record. |
+| Finding | A reviewer's claim, recorded with its evidence, its grade and its outcome in `docs/findings/`. |
 
 ## Decision index
 
@@ -126,7 +129,8 @@ the job of the operator's own tools (`virsh`, virt-manager, or a script).
 | Toolchain | Lean, established libraries; GitHub-only distribution for now; English | 0020 |
 | Testing | Four tiers; real boots in CI; host checks at milestones | 0021 |
 | Extensibility | Distro primitives by composition; self-contained controls | 0022 |
-| Execution | Walking skeleton first; one PR per milestone; merges gated by the user; review pending | 0023 |
+| Execution | Walking skeleton first; one PR per milestone; merges gated by the user | 0023 |
+| Review | A separate review session per milestone; findings graded from closed lists; fixes test-first and reviewed once; an open finding blocks the approval | 0024 |
 
 ## Document map
 
@@ -142,4 +146,5 @@ the job of the operator's own tools (`virsh`, virt-manager, or a script).
 | `08-testing.md` | Test tiers, CI, host-check batches |
 | `09-milestones.md` | Milestones with acceptance criteria; session protocol |
 | `10-assumptions.md` | What is verified, what is assumed, and the fallbacks |
+| `11-review.md` | How a milestone is reviewed: roles, the round, the scale, the findings file |
 | `STATUS.md` | Progress between sessions |

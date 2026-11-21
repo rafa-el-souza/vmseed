@@ -10,14 +10,15 @@ as a structural template.
 1. `docs/spec/00-overview.md`: goals, non-goals, principles, decision index.
 2. `docs/spec/STATUS.md`: what is done, what is next, what waits on the user.
 3. Your milestone in `docs/spec/09-milestones.md`, then the sections it lists.
+4. In a review session: `docs/spec/11-review.md`, whole.
 
 `docs/adr/` records why each decision was made.
 
 ## Decisions are closed
 
-The ADRs were decided with the user on 2026-11-20 and revised with them on
-2026-11-21. Do not re-litigate them and do not work around them. If
-implementation shows a decision is wrong:
+The ADRs were decided with the user on 2026-11-20 and 2026-11-21, and revised
+with them on 2026-11-21. Do not re-litigate them and do not work around them.
+If implementation shows a decision is wrong:
 
 1. Stop that line of work.
 2. Explain the evidence to the user and ask with a question box (options,
@@ -66,6 +67,7 @@ uv run ruff format --check .
 uv run ruff check .
 uv run pyright
 uv run pytest            # unit, golden and contract tiers
+python3 tools/findings.py check   # from M0 on
 ```
 
 The `e2e` tier runs only in CI. A milestone is done when its acceptance
@@ -108,6 +110,8 @@ milestone requires it.
   then.
 - Commit and push only what the milestone needs. Do not commit secrets, keys,
   images, fleet files or generated VM directories.
+- A commit that fixes a review finding ends its subject with the finding's
+  id: `fix(report): refuse a second host-key record (M3-F04)`.
 
 ## Ending a session
 
@@ -115,9 +119,24 @@ milestone requires it.
 2. Update `docs/spec/10-assumptions.md` for anything verified or disproved.
 3. In the PR description: what changed, how it was verified (with CI run
    references), what is still unverified.
+4. A build session tells the user that the pull request is ready for
+   `/milestone-review <PR>` in a new session.
 
 ## Review
 
-The per-milestone review process is **not decided yet**: the user will send a
-description of the reviewer scheme they want. Until then follow the
-provisional process in `docs/spec/09-milestones.md`.
+Every milestone takes two sessions (ADR 0024, `docs/spec/11-review.md`).
+
+- A **build session** implements, opens the PR and gets `ci` and `e2e` green.
+  It never reviews its own work, never writes under `docs/findings/` and never
+  starts the review. The `review-record` job stays red until the review
+  closes: that is expected.
+- A **review session** is a new session that the user starts with
+  `/milestone-review <PR>`. It launches the reviewers with their literal
+  briefs, records every claim, fixes what the plan says, runs the fix review
+  and closes the record.
+- What gets fixed follows from each finding's grade, not from anyone's
+  preference. A session never changes a grade, never drops a claim, and never
+  fixes a finding that is only recorded. Disagreement is a question for the
+  user.
+- The findings file is public: paths from the repository root; no local path,
+  account name or host name.

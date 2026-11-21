@@ -1,7 +1,7 @@
 # 0023. Execution process
 
-Status: accepted, 2026-11-20; revised 2026-11-21. **The review part is
-provisional.**
+Status: accepted, 2026-11-20; revised 2026-11-21. The review of each
+milestone is decided in ADR 0024.
 
 ## Context
 
@@ -37,8 +37,8 @@ logs carrying guest output, fetched pages).
   System packages are requested from the user.
 - **Host checks:** four batches at defined milestones (ADR 0021), run only
   from merged branches.
-- **Review:** not decided. The user will describe the reviewer scheme they
-  want. A provisional process is in `09-milestones.md`.
+- **Review:** every milestone is reviewed by a separate session before the
+  owner is asked to approve (ADR 0024, `11-review.md`).
 
 ## Consequences
 

@@ -1,9 +1,10 @@
 # Architecture decision records
 
-One decision per file. Each was taken with the user on 2026-11-20. Records
-marked "revised 2026-11-21" were changed after two independent design reviews
-(technical soundness, and security); where a revision altered what the user
-had decided, the user decided again.
+One decision per file. Records 0001 to 0023 were taken with the user on
+2026-11-20, and 0024 on 2026-11-21. Records marked "revised 2026-11-21" were
+changed after two independent design reviews (technical soundness, and
+security); where a revision altered what the user had decided, the user
+decided again.
 
 To change a decision: gather the evidence, ask the user, then amend the record
 or add a new one that supersedes it. Never work around a record.
@@ -33,3 +34,4 @@ or add a new one that supersedes it. Never work around a record.
 | [0021](0021-testing-strategy.md) | Testing strategy |
 | [0022](0022-extensibility-by-composition.md) | Extensibility by composition |
 | [0023](0023-execution-process.md) | Execution process and merge gate |
+| [0024](0024-review-process.md) | Review: a separate session, a graded record, fixes reviewed once |

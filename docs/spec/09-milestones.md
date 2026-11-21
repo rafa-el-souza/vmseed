@@ -5,7 +5,10 @@ one pull request into `v2`, unless a slice is named.
 
 ## Session protocol
 
-A session implements one milestone or one named slice.
+Each milestone, or named slice, takes two sessions, both started by the user:
+a **build session** and a **review session** (ADR 0024).
+
+### Build session
 
 1. Read `CLAUDE.md`, `00-overview.md`, `STATUS.md`, this milestone, and the
    sections it lists. Read the ADRs they cite.
@@ -14,12 +17,25 @@ A session implements one milestone or one named slice.
 3. Branch `m<N>-<slug>` from `v2`.
 4. Implement with tests at every tier the milestone names.
 5. Run the quality gates. Push. Open the PR. Read the CI results, including
-   `e2e`, and fix until green.
+   `e2e`, and fix until the `ci` and `e2e` workflows are green. The
+   `review-record` job of the `approval` workflow stays red until the review
+   is closed: leave it.
 6. Update `STATUS.md` and `10-assumptions.md`.
 7. Report to the user: what is done, how it was verified (CI run references),
-   what remains unverified, what is needed from them.
+   what remains unverified, what is needed from them, and that the pull
+   request is ready for `/milestone-review <PR>` in a new session.
 
-Rules for every session:
+The build session does not review its own work, does not write the findings
+file and does not start the review.
+
+### Review session
+
+A new session, started by the user with `/milestone-review <PR>`. It follows
+`11-review.md`: the reviewers, the findings file, the fixes, the fix review,
+the closing summary. When it ends, the approval request is waiting for the
+user.
+
+### Rules for every session
 
 - Decisions are closed (see `CLAUDE.md`). Anything this document leaves open
   is the session's call, noted in the PR.
@@ -33,36 +49,39 @@ Rules for every session:
 ## Definition of done
 
 - Every acceptance criterion of the milestone holds.
-- Quality gates pass; CI is green, including `e2e` when the milestone has e2e
-  criteria.
+- Quality gates pass; the `ci` workflow is green, and `e2e` too when the
+  milestone has e2e criteria.
 - User documentation touched by the change is updated; generated references
   are regenerated.
 - Each assumption the milestone was due to verify is recorded as verified or
   disproved, with the evidence.
+- The review is closed: `docs/findings/m<N>.toml` exists, no finding is open,
+  and every question has the user's answer.
 - No known defect is left unrecorded.
 
-## Review (provisional, pending the user's decision)
+## Review
 
-The user will describe the reviewer scheme they want. Until then:
+Decided in ADR 0024. The process and the scale are in `11-review.md`; the
+briefs the reviewers receive are in `.claude/skills/milestone-review/`.
 
-1. The implementing session opens the PR with green CI.
-2. A **separate session, without the implementer's context**, reviews the PR
-   for correctness and for security. Findings get an ID (`M3-R01`), a
-   severity, a file and line, a concrete failure scenario, evidence
-   (reproduced, or "by inspection"), and a suggested fix that is described,
-   not applied.
-3. Fixes are separate commits that cite the finding ID. A defect is first
-   reproduced by a test, which then becomes the regression test.
-4. The user approves the `merge-approval` deployment and merges.
-
-When the user's scheme arrives, replace this section and update ADR 0023.
+In short: a separate session launches a correctness reviewer and, when the
+change touches security-relevant code, a security reviewer. Each claim is
+reproduced by a failing test, or, where only a boot can show it, rebuilt by a
+second reader. Each finding gets a grade from closed lists, and the grade
+decides whether it is fixed, put to the user, or only recorded. Fixes are
+test-first, one commit per finding, and reviewed once. The record is
+`docs/findings/m<N>.toml`; the approval job waits until it is closed.
 
 ---
 
 ## M0. Foundation
 
 **Goal.** The repository is ready for Python work, the Bash version is
-preserved, and nothing reaches `v2` or `main` without the user.
+preserved, and nothing reaches `v2` or `main` without the user and without a
+closed review.
+
+**Read.** 08 (tiers, CI workflows), 11 (the findings tool and the gate), and
+ADRs 0020, 0023 and 0024. This milestone changes CI.
 
 **Needs from the user.**
 
@@ -90,7 +109,10 @@ preserved, and nothing reaches `v2` or `main` without the user.
   engine at first run, outside the lock file, is not acceptable; if the type
   checker's packaging does that, say so to the user before choosing how to
   install it.
-- The `ci` workflow and the `approval` workflow.
+- The `ci` workflow, and the `approval` workflow with its two jobs:
+  `review-record`, then `approve` (see 08 and 11).
+- `tools/findings.py` with its tests, as 11 specifies: `check`, `open`,
+  `count`, `summary`, `trigger` and `gate`.
 - `.gitignore` for v2: fleet files, images, ISOs, logs, VM directories, host
   check outputs.
 - A constraints file exported from `uv.lock`, with a CI check that it is
@@ -103,6 +125,14 @@ preserved, and nothing reaches `v2` or `main` without the user.
 - `v0-bash` exists; no Bash source remains on `v2`.
 - With a throwaway pull request: it cannot be merged before the user approves
   the `merge-approval` deployment, and a direct push to `v2` is refused.
+- On a milestone's branch (`m<N>-<slug>`): no approval is requested while
+  the milestone's findings file is missing or has an open finding, and the
+  request appears once the record is closed.
+- A test shows that the lists inside `tools/findings.py` equal the tables of
+  11, and that `check` refuses each kind of bad file 11 names.
+
+This milestone's own review is the first run of the process in 11. Whatever
+did not fit is reported to the user and recorded in `STATUS.md`.
 
 ## M1. Walking skeleton
 
@@ -308,6 +338,9 @@ the standard user).
 ## M9. Documentation and release
 
 **Goal.** A released 1.0.0 that a stranger can evaluate and use.
+
+**Read.** 00 (principle 9), 03 (limits), 07, 08 (tier 4), and every section
+the user documentation describes.
 
 **Scope.**
 - README: what it is, a quickstart, real output.
