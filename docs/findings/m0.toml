@@ -465,7 +465,7 @@ options = [
 ]
 recommendation = "Add `review-record` as a required status check to the rulesets of v2 and main, then show on a throwaway pull request that a push after the approval blocks the merge; record it in 10-assumptions"
 assumption = "The gate as built; the point stays unverified."
-answer = ""
+answer = "Chosen by the user on 2026-11-21: Add `review-record` as a required status check to the rulesets of v2 and main, then show on a throwaway pull request that a push after the approval blocks the merge; record it in 10-assumptions"
 
 [[question]]
 id = "M0-Q3"
@@ -479,7 +479,7 @@ options = [
 ]
 recommendation = "The Outcomes table: a question whose findings all ended without needing an answer does not keep the record open; align 11's `open` row and 09 in a process amendment"
 assumption = "As built: the Outcomes table."
-answer = ""
+answer = "Chosen by the user on 2026-11-21: The Outcomes table: a question whose findings all ended without needing an answer does not keep the record open; align 11's `open` row and 09 in a process amendment"
 
 [[question]]
 id = "M0-Q4"
@@ -493,7 +493,7 @@ options = [
 ]
 recommendation = "A root holds a clause, or an ordinary path with an effect other than blocked, whatever its plan, as built; align the Clause table in a process amendment"
 assumption = "As built."
-answer = ""
+answer = "Chosen by the user on 2026-11-21: A root holds a clause, or an ordinary path with an effect other than blocked, whatever its plan, as built; align the Clause table in a process amendment"
 
 [[question]]
 id = "M0-Q5"
@@ -507,7 +507,7 @@ options = [
 ]
 recommendation = "Yes: `check` refuses `picked = true` with any outcome but `fixed`; change findings.py in this review"
 assumption = "As built."
-answer = ""
+answer = "Chosen by the user on 2026-11-21: Yes: `check` refuses `picked = true` with any outcome but `fixed`; change findings.py in this review"
 
 [[question]]
 id = "M0-Q6"
@@ -522,7 +522,7 @@ options = [
 ]
 recommendation = "A process amendment designs a gate that ties the record to the head; until then the owner checks at approval that every commit after the last round's head cites a finding or only changes the record"
 assumption = "As built; the owner checks the commits after the reviewed head at approval."
-answer = ""
+answer = "Chosen by the user on 2026-11-21: A process amendment designs a gate that ties the record to the head; until then the owner checks at approval that every commit after the last round's head cites a finding or only changes the record"
 
 [[question]]
 id = "M0-Q7"
@@ -536,7 +536,7 @@ options = [
 ]
 recommendation = "A process amendment before M3 defines a form for guest-side paths that `check` accepts"
 assumption = "As built."
-answer = ""
+answer = "Chosen by the user on 2026-11-21: A process amendment before M3 defines a form for guest-side paths that `check` accepts"
 
 [[question]]
 id = "M0-Q8"
@@ -552,7 +552,7 @@ options = [
 ]
 recommendation = "Widen now, in 11 and findings.py: the patterns `from os import`, `from shutil import`, `from tempfile import` and `from yaml import`; the paths pyproject.toml, uv.lock, constraints.txt and .claude/skills/milestone-review/"
 assumption = "As built."
-answer = ""
+answer = "Chosen by the user on 2026-11-21: Widen now, in 11 and findings.py: the patterns `from os import`, `from shutil import`, `from tempfile import` and `from yaml import`; the paths pyproject.toml, uv.lock, constraints.txt and .claude/skills/milestone-review/"
 
 [[question]]
 id = "M0-Q9"
@@ -566,7 +566,7 @@ options = [
 ]
 recommendation = "A scope with no changed file is not run, a file of no scope joins `edge`, and a single run is recorded as `ran`, as done here; write it into 11 in a process amendment"
 assumption = "One run over every path of the range, recorded as `ran`."
-answer = ""
+answer = "Chosen by the user on 2026-11-21: A scope with no changed file is not run, a file of no scope joins `edge`, and a single run is recorded as `ran`, as done here; write it into 11 in a process amendment"
 
 [[question]]
 id = "M0-Q10"
@@ -580,7 +580,7 @@ options = [
 ]
 recommendation = "Keep as built: `check` refuses what it can recognise; the rest is the review session's care and the user's reading"
 assumption = "As built."
-answer = ""
+answer = "Chosen by the user on 2026-11-21: Keep as built: `check` refuses what it can recognise; the rest is the review session's care and the user's reading"
 
 [[question]]
 id = "M0-Q11"
@@ -594,7 +594,7 @@ options = [
 ]
 recommendation = "Yes: once v2 holds findings.py (after M0 merges), approval.yml runs v2's tool on the pull request's record; a process amendment with its own review"
 assumption = "As built."
-answer = ""
+answer = "Chosen by the user on 2026-11-21: Yes: once v2 holds findings.py (after M0 merges), approval.yml runs v2's tool on the pull request's record; a process amendment with its own review"
 
 [[question]]
 id = "M0-Q12"
@@ -609,4 +609,4 @@ options = [
 ]
 recommendation = "The user makes sure the repository's default workflow permissions are read-only (Settings, Actions, General) and says what they were; the result goes into 10-assumptions"
 assumption = "Unverified: the repository's default workflow permission is unknown."
-answer = ""
+answer = "Chosen by the user on 2026-11-21: The user makes sure the repository's default workflow permissions are read-only (Settings, Actions, General) and says what they were; the result goes into 10-assumptions"
