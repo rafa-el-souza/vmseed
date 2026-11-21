@@ -13,3 +13,21 @@ security = "not triggered"
 security_trigger = []
 verifier = "not needed"
 fix_review = "not needed"
+
+[[finding]]
+id = "M98-F01"
+round = 1
+source = "correctness"
+ref = "C1"
+file = "tools/findings.py"
+line = 1
+summary = "A throwaway open finding that reopens the record."
+scenario = "Pushed after the owner approved, to show that the merge is blocked again."
+evidence = "inspection"
+reproduction = "None: a fixture of the gate re-check."
+path = "ordinary"
+effect = "none"
+clause = ""
+rule = ""
+plan = "record"
+outcome = ""
