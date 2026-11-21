@@ -9,7 +9,8 @@ names; one whose name is not a literal is refused in a restricted layer. A
 dynamic import is a call of `__import__`, `importlib.import_module`,
 `pkgutil.resolve_name` or `runpy.run_module`, under whatever name the
 module's imports give it; `importlib.util.find_spec` counts by the packages
-above the module it names, which it imports. A call reached through
+above the module it names, which it imports; and an `__import__` with a
+`level` counts relative to the module's package. A call reached through
 `getattr`, `exec` or `eval` is not followed.
 """
 
@@ -72,6 +73,9 @@ DYNAMIC_IMPORTS = frozenset(
 #: Of those, the ones that import only the packages above the module named.
 IMPORTS_ONLY_PARENTS = frozenset({"importlib.util.find_spec"})
 
+#: Of those, the ones a `level` argument makes relative to the caller.
+DUNDER_IMPORTS = frozenset({"builtins.__import__", "importlib.__import__"})
+
 
 def _bindings(tree: ast.Module) -> dict[str, str]:
     """The dotted name that each name bound by an import in TREE stands for."""
@@ -113,13 +117,35 @@ def _literal(node: ast.expr) -> str | None:
     return None
 
 
-def _dynamic_target(call: ast.Call, called: str) -> str | None:
+def _level(call: ast.Call) -> int | None:
+    """The `level` of an `__import__` call: 0 when absent, None if not literal."""
+    node = call.args[4] if len(call.args) > 4 else None
+    for keyword in call.keywords:
+        if keyword.arg == "level":
+            node = keyword.value
+    if node is None:
+        return 0
+    if isinstance(node, ast.Constant) and isinstance(node.value, int):
+        return node.value
+    return None
+
+
+def _dynamic_target(call: ast.Call, called: str, own_package: str) -> str | None:
     """The module a dynamic import names; None when it is not a literal."""
     name = _literal(call.args[0]) if call.args else None
     if name is None:
         return None
     if called == "pkgutil.resolve_name":
         name = name.partition(":")[0]
+    if called in DUNDER_IMPORTS:
+        level = _level(call)
+        if level is None:
+            return None
+        if level > 0:
+            anchor = own_package.split(".")
+            anchor = anchor[: len(anchor) - (level - 1)]
+            return ".".join([*anchor, *([name] if name else [])])
+        return name
     if not name.startswith("."):
         return name
     package = _literal(call.args[1]) if len(call.args) > 1 else None
@@ -157,7 +183,7 @@ def imports_of(module: str, path: Path, known: set[str]) -> set[str]:
         elif isinstance(node, ast.Call):
             called = _called(node, bindings)
             if _is_dynamic_import(node, called):
-                target = _dynamic_target(node, called)
+                target = _dynamic_target(node, called, package)
                 if not target:
                     found.add(UNKNOWN)
                 elif called in IMPORTS_ONLY_PARENTS:
@@ -406,6 +432,46 @@ def test_a_spec_lookup_counts_only_the_packages_above(tmp_path: Path) -> None:
             "config/probe.py": "import importlib.util\n"
             "importlib.util.find_spec('vmseed.host')\n",
             "host/virsh.py": "",
+        },
+    )
+
+    assert violations(src) == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        pytest.param(
+            "__import__('host.virsh', globals(), None, (), 2)\n",
+            id="__import__ with a level",
+        ),
+        pytest.param(
+            "__import__('host.virsh', globals(), level=2)\n",
+            id="__import__ with a level by keyword",
+        ),
+        pytest.param(
+            "import importlib\n"
+            "importlib.__import__('host.virsh', globals(), None, (), 2)\n",
+            id="importlib.__import__ with a level",
+        ),
+    ],
+)
+def test_a_relative_dunder_import_is_found(tmp_path: Path, source: str) -> None:
+    files = {"guest/registry.py": source, "host/virsh.py": ""}
+
+    found = violations(write_tree(tmp_path, files))
+
+    assert any(
+        line.startswith("vmseed.guest.registry imports vmseed.host") for line in found
+    ), found
+
+
+def test_a_relative_dunder_import_within_the_layer_passes(tmp_path: Path) -> None:
+    src = write_tree(
+        tmp_path,
+        {
+            "guest/registry.py": "__import__('controls', globals(), None, (), 1)\n",
+            "guest/controls.py": "",
         },
     )
 
