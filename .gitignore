@@ -47,6 +47,13 @@ id_rsa*
 id_ecdsa*
 id_ed25519*
 
+# Private files of the Bash tool (tag v0-bash) that a checkout used with it
+# may still hold: its personal config, its scratch directory, and the guest
+# diagnostics brought back from a VM.
+/fedora-cloud.conf
+/temp/
+/tools/diagnostics-results/
+
 # Local state of Claude Code
 /.claude/settings.local.json
 /.claude/worktrees/

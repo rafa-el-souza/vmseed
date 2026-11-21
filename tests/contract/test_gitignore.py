@@ -88,3 +88,43 @@ def test_a_hosts_file_is_ignored(tmp_path: Path, path: str) -> None:
 @pytest.mark.parametrize("path", KEPT)
 def test_a_project_file_is_not_ignored(tmp_path: Path, path: str) -> None:
     assert ignored([path], tmp_path) == {path: False}
+
+
+#: Files the Bash tool told its user to keep in the checkout (its personal
+#: config and temp/ at the root, guest diagnostics brought back from a VM),
+#: which v0's ignore rules kept out of the repository.
+BASH_TOOL_PRIVATE = [
+    "fedora-cloud.conf",
+    "temp/notes.txt",
+    "tools/diagnostics-results/vmseed-diag.txt",
+]
+
+
+@pytest.mark.parametrize("path", BASH_TOOL_PRIVATE)
+def test_a_private_file_of_the_bash_tool_is_not_staged_by_add_all(
+    tmp_path: Path, path: str
+) -> None:
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    (checkout / ".gitignore").write_bytes((REPO / ".gitignore").read_bytes())
+    private = checkout / path
+    private.parent.mkdir(parents=True, exist_ok=True)
+    private.write_text("OVERLAY_IMAGE_DIR=/srv/example/overlays\n", encoding="utf-8")
+    env = {
+        "HOME": str(tmp_path),
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "PATH": "/usr/bin:/bin",
+    }
+
+    def git(*args: str) -> str:
+        command = [require_tool("git"), "-C", str(checkout), *args]
+        result = subprocess.run(
+            command, capture_output=True, text=True, timeout=60, check=True, env=env
+        )
+        return result.stdout
+
+    git("init", "--quiet")
+    staged = git("add", "--all", "--dry-run")
+
+    assert f"add '{path}'" not in staged
