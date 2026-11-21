@@ -4,16 +4,17 @@ Updated at the end of every session. Newest state first.
 
 ## Now
 
-- **2026-11-21, M0 build session.** Pull request #2 (`m0-foundation`) is
-  open. `ci` is green on Python 3.12, 3.13 and 3.14 (run 44862028406).
-  `approval` is red on purpose: `review-record` fails while
-  `docs/findings/m0.toml` does not exist, and `approve` is skipped (run
-  44862028448). The tag `v0-bash` is pushed.
-- **M0 is not built yet:** three acceptance criteria need the GitHub settings
-  below: the throwaway pull request, the refused push to `v2`, and the
-  approval request appearing once a record is closed.
-- **Next:** the user's GitHub settings; then the build session runs those
-  checks and hands over to the review session (`/milestone-review 2`).
+- **2026-11-21, M0 built.** Pull request #2 (`m0-foundation`) is ready for
+  review. `ci` is green on Python 3.12, 3.13 and 3.14. `approval` is red on
+  purpose until the review closes `docs/findings/m0.toml`.
+- The merge gate was shown end to end with throwaway pull request #3, closed
+  unmerged: no approval was requested while its record was missing or open,
+  the request appeared once the record was closed, the pull request stayed
+  blocked until the owner approved, and was mergeable after. A direct push to
+  `v2` was declined. See A-GH-GATE, A-GH-UNATTR and A-REV-GATE in
+  `10-assumptions.md`.
+- **Next:** the M0 review session. The user starts a new session with
+  `/milestone-review 2`. It is the first run of the process of 11.
 - Earlier on 2026-11-21: the specification was reviewed by two independent
   sessions and revised; the review of each milestone was decided (ADR 0024,
   `11-review.md`). `v2` was pushed once by the planning session, with the
@@ -24,21 +25,21 @@ Updated at the end of every session. Newest state first.
 
 | Item | For | Detail |
 |---|---|---|
-| Environment `merge-approval` | M0 | Exists, but the API shows no protection rule: still to do, the user as required reviewer, self-review prevention off, and "allow administrators to bypass" off (it is on). |
-| Protection of `v2` | M0 | The ruleset still targets only the default branch: add `v2` to its targets, bypass list empty. On `main` it already requires a pull request, rebase merges, a linear history and a successful deployment to `merge-approval`, and blocks force-push and deletion. |
-| Throwaway pull request, refused push | M0 | Run by the build session once the two rows above are done. The user approves one deployment of the throwaway pull request and does not merge it. |
+| M0 review session | M0 | Start a new session with `/milestone-review 2`. |
+| Workflow permission on the token | M1, M6 | Granted now; M0 proved it. ADR 0023 grants it only while a milestone changes CI: it can be removed once M0 is merged, and granted again for M1 and M6. |
 | Host-check batch 1 | After M1 | Written by the M1 session. Run only from a merged branch. |
 
 Done on 2026-11-21: the token, including the workflow permission (see
 V-GH-TOKEN in `10-assumptions.md`), `gh` authenticated on the dev VM,
-`libvirt-client` installed, the review scheme, `merge-approval` created, the
-required deployment on `main`.
+`libvirt-client` installed, the review scheme, the environment
+`merge-approval` with its required reviewer, the protection of `v2` and
+`main`, the deployment approval of the throwaway pull request.
 
 ## Milestones
 
 | # | Milestone | State |
 |---|---|---|
-| M0 | Foundation | building (PR #2; waits on the GitHub settings above) |
+| M0 | Foundation | built (ready for review): PR #2 |
 | M1 | Walking skeleton | not started |
 | M2 | Configuration | not started |
 | M3 | Distros and baseline | not started |
@@ -76,13 +77,13 @@ States: not started, building, built (ready for review), in review, reviewed
 
 - Branches: `main` (the Bash tool) and `v2`. Tag `v0-bash` on `120fd6a`, the
   last Bash commit of `main` (pushed 2026-11-21).
-- One ruleset, on the default branch only: pull request required with no
+- One ruleset, on the default branch and `v2`: pull request required with no
   approval count, linear history, rebase as the only merge method, a
   successful deployment to `merge-approval` required, no force-push, no
   deletion, no bypass. Because a rebase merge rewrites commit hashes, the
   review record cites finding ids, never hashes (see 11).
-- Environment `merge-approval` exists, with no protection rule yet (see
-  "Waiting on the user").
+- Environment `merge-approval`: the owner as required reviewer, self-review
+  prevention off, no bypass for administrators, deployments from any branch.
 - The workflow list shows `ci.yml` as "CI": GitHub names a workflow after the
   default branch's file, which is still v0's until `v2` replaces `main`.
 
@@ -93,4 +94,4 @@ States: not started, building, built (ready for review), in review, reviewed
 | 2026-11-20 | Planning | Decisions taken with the user; spec and ADRs 0001 to 0023 written. |
 | 2026-11-21 | Design review | Two independent reviews (42 findings). Spec and ADRs revised; four decisions re-taken with the user: two-boot verification, control/data split, share model, vmseed's own `known_hosts`. |
 | 2026-11-21 | Review process | Decided with the user in two rounds of questions: ADR 0024, `11-review.md`, the `/milestone-review` skill and its briefs. The dev VM's token was checked. `v2` pushed. |
-| 2026-11-21 | M0 build | Tag `v0-bash`; Bash tool removed from v2; Python project, tools, `findings.py`, workflows; PR #2 with `ci` green. Decided with the user: pyright with its `nodejs` extra (ADR 0020); the push to `v2` is tried only once its rules show in the API. Waiting on the GitHub settings for the gate checks. |
+| 2026-11-21 | M0 build | Tag `v0-bash`; Bash tool removed from v2; Python project, tools, `findings.py`, workflows; PR #2 with `ci` green. Decided with the user: pyright with its `nodejs` extra (ADR 0020); the push to `v2` is tried only once its rules show in the API. After the user's GitHub settings, the gate was shown with throwaway PR #3 (closed unmerged) and a declined push to `v2`. M0 built. |
