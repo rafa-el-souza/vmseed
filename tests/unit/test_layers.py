@@ -5,10 +5,14 @@
 and the `__init__` of every package above them, so the rule is checked on
 what a module reaches, not only on what it names. Imports inside functions
 and under `TYPE_CHECKING` count. A dynamic import counts by the module it
-names; one whose name is not a literal is refused in a restricted layer.
+names; one whose name is not a literal is refused in a restricted layer. A
+dynamic import is a call of `__import__`, `importlib.import_module` or
+`pkgutil.resolve_name`, under whatever name the module's imports give it. A
+call reached through `getattr`, `exec` or `eval` is not followed.
 """
 
 import ast
+import importlib.util
 from collections import deque
 from pathlib import Path
 
@@ -50,11 +54,77 @@ def modules_under(src: Path) -> dict[str, Path]:
     return modules
 
 
-def _is_dynamic_import(call: ast.Call) -> bool:
+#: The functions that import the module a string names, by the dotted name
+#: that a module's imports give them.
+DYNAMIC_IMPORTS = frozenset(
+    {
+        "builtins.__import__",
+        "importlib.__import__",
+        "importlib.import_module",
+        "pkgutil.resolve_name",
+    }
+)
+
+
+def _bindings(tree: ast.Module) -> dict[str, str]:
+    """The dotted name that each name bound by an import in TREE stands for."""
+    names: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                top = alias.name.split(".")[0]
+                names[alias.asname or top] = alias.name if alias.asname else top
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            for alias in node.names:
+                names[alias.asname or alias.name] = f"{node.module}.{alias.name}"
+    return names
+
+
+def _called(call: ast.Call, bindings: dict[str, str]) -> str:
+    """The dotted name of what CALL calls, as far as the imports tell."""
+    attributes: list[str] = []
     function = call.func
-    if isinstance(function, ast.Name):
-        return function.id == "__import__"
-    return isinstance(function, ast.Attribute) and function.attr == "import_module"
+    while isinstance(function, ast.Attribute):
+        attributes.insert(0, function.attr)
+        function = function.value
+    if not isinstance(function, ast.Name):
+        return ""
+    default = "builtins.__import__" if function.id == "__import__" else function.id
+    return ".".join([bindings.get(function.id, default), *attributes])
+
+
+def _is_dynamic_import(call: ast.Call, called: str) -> bool:
+    function = call.func
+    if isinstance(function, ast.Attribute) and function.attr == "import_module":
+        return True
+    return called in DYNAMIC_IMPORTS
+
+
+def _literal(node: ast.expr) -> str | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
+
+
+def _dynamic_target(call: ast.Call, called: str) -> str | None:
+    """The module a dynamic import names; None when it is not a literal."""
+    name = _literal(call.args[0]) if call.args else None
+    if name is None:
+        return None
+    if called == "pkgutil.resolve_name":
+        name = name.partition(":")[0]
+    if not name.startswith("."):
+        return name
+    package = _literal(call.args[1]) if len(call.args) > 1 else None
+    for keyword in call.keywords:
+        if keyword.arg == "package":
+            package = _literal(keyword.value)
+    if package is None:
+        return None
+    try:
+        return importlib.util.resolve_name(name, package)
+    except (ImportError, ValueError):
+        return None
 
 
 def imports_of(module: str, path: Path, known: set[str]) -> set[str]:
@@ -63,6 +133,7 @@ def imports_of(module: str, path: Path, known: set[str]) -> set[str]:
     package = module if is_package else module.rpartition(".")[0]
     found = with_parents(module) - {module}
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    bindings = _bindings(tree)
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -76,12 +147,11 @@ def imports_of(module: str, path: Path, known: set[str]) -> set[str]:
                 base = node.module or ""
             found |= with_parents(base)
             found |= {f"{base}.{a.name}" for a in node.names} & known
-        elif isinstance(node, ast.Call) and _is_dynamic_import(node):
-            name = node.args[0] if node.args else None
-            if isinstance(name, ast.Constant) and isinstance(name.value, str):
-                found |= with_parents(name.value)
-            else:
-                found.add(UNKNOWN)
+        elif isinstance(node, ast.Call):
+            called = _called(node, bindings)
+            if _is_dynamic_import(node, called):
+                target = _dynamic_target(node, called)
+                found |= with_parents(target) if target else {UNKNOWN}
     return {m for m in found if m == UNKNOWN or m.split(".")[0] == "vmseed"}
 
 
@@ -222,6 +292,87 @@ def test_the_allowed_directions_pass(tmp_path: Path) -> None:
             "host/domain.py": "import vmseed.plan\nfrom vmseed.config import models\n",
             "ops/create.py": "import vmseed.host.domain\nimport vmseed.plan\n",
             "cli.py": "from vmseed.ops import create\n",
+        },
+    )
+
+    assert violations(src) == []
+
+
+@pytest.mark.parametrize(
+    ("files", "expected"),
+    [
+        pytest.param(
+            {
+                "guest/registry.py": "from importlib import import_module\n"
+                "import_module('vmseed.host.virsh')\n",
+                "host/virsh.py": "",
+            },
+            "vmseed.guest.registry imports vmseed.host",
+            id="import_module imported by name, literal",
+        ),
+        pytest.param(
+            {
+                "config/models.py": "from importlib import import_module\n"
+                "name = 'vmseed.' + 'ops'\nimport_module(name)\n",
+                "ops/create.py": "",
+            },
+            f"vmseed.config.models imports {UNKNOWN}",
+            id="import_module imported by name, computed",
+        ),
+    ],
+)
+def test_a_dynamic_import_through_a_bare_import_module_is_found(
+    tmp_path: Path, files: dict[str, str], expected: str
+) -> None:
+    found = violations(write_tree(tmp_path, files))
+
+    assert any(line.startswith(expected) for line in found), found
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        pytest.param(
+            "import importlib\nimportlib.import_module('.virsh', 'vmseed.host')\n",
+            id="import_module of a relative name",
+        ),
+        pytest.param(
+            "import importlib\nimportlib.__import__('vmseed.host.virsh')\n",
+            id="importlib.__import__",
+        ),
+        pytest.param(
+            "import builtins\nbuiltins.__import__('vmseed.host.virsh')\n",
+            id="builtins.__import__",
+        ),
+        pytest.param(
+            "import pkgutil\npkgutil.resolve_name('vmseed.host.virsh')\n",
+            id="pkgutil.resolve_name",
+        ),
+        pytest.param(
+            "from importlib import import_module as load\nload('vmseed.host.virsh')\n",
+            id="import_module imported under another name",
+        ),
+    ],
+)
+def test_a_dynamic_import_through_another_spelling_is_found(
+    tmp_path: Path, source: str
+) -> None:
+    files = {"guest/registry.py": source, "host/virsh.py": ""}
+
+    found = violations(write_tree(tmp_path, files))
+
+    assert any(
+        line.startswith("vmseed.guest.registry imports vmseed.host") for line in found
+    ), found
+
+
+def test_a_function_of_the_same_name_is_not_a_dynamic_import(tmp_path: Path) -> None:
+    src = write_tree(
+        tmp_path,
+        {
+            "config/names.py": "def resolve_name(name):\n    return name\n",
+            "config/models.py": "from vmseed.config.names import resolve_name\n"
+            "vm = 'web'\nresolve_name(vm)\n",
         },
     )
 
