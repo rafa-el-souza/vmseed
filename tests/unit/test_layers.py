@@ -6,9 +6,10 @@ and the `__init__` of every package above them, so the rule is checked on
 what a module reaches, not only on what it names. Imports inside functions
 and under `TYPE_CHECKING` count. A dynamic import counts by the module it
 names; one whose name is not a literal is refused in a restricted layer. A
-dynamic import is a call of `__import__`, `importlib.import_module` or
-`pkgutil.resolve_name`, under whatever name the module's imports give it. A
-call reached through `getattr`, `exec` or `eval` is not followed.
+dynamic import is a call of `__import__`, `importlib.import_module`,
+`pkgutil.resolve_name` or `runpy.run_module`, under whatever name the
+module's imports give it. A call reached through `getattr`, `exec` or `eval`
+is not followed.
 """
 
 import ast
@@ -62,6 +63,7 @@ DYNAMIC_IMPORTS = frozenset(
         "importlib.__import__",
         "importlib.import_module",
         "pkgutil.resolve_name",
+        "runpy.run_module",
     }
 )
 
@@ -351,6 +353,10 @@ def test_a_dynamic_import_through_a_bare_import_module_is_found(
         pytest.param(
             "from importlib import import_module as load\nload('vmseed.host.virsh')\n",
             id="import_module imported under another name",
+        ),
+        pytest.param(
+            "import runpy\nrunpy.run_module('vmseed.host.virsh')\n",
+            id="runpy.run_module",
         ),
     ],
 )
