@@ -1,0 +1,572 @@
+milestone = "M0"
+pr = 2
+
+[[round]]
+n = 1
+base = "85e1cd5"
+head = "bccf5db"
+date = 2026-11-21
+correctness = "ran"
+security = "ran"
+security_trigger = [
+  ".github/workflows/approval.yml",
+  ".github/workflows/ci.yml",
+  "tools/diagnostics-results/.gitignore",
+  "tools/findings.py",
+  "tools/guest-diagnostics.sh",
+]
+verifier = "not needed"
+fix_review = ""
+
+[[finding]]
+id = "M0-F01"
+round = 1
+source = "correctness"
+ref = "C1"
+file = "tools/findings.py"
+line = 1112
+summary = "`_patterns_added` splits git's diff output with `str.splitlines()`. That also breaks a git line at form feed, vertical tab, a lone CR, \\x1c to \\x1e, NEL, U+2028 and U+2029, so `trigger` misses a pattern that follows one of those characters on an added line."
+scenario = "A milestone adds this line to src/vmseed/cli.py, which is not a trigger path: `SEPARATOR = \"<raw form feed>\"; import subprocess`. git counts it as one added line that contains `subprocess`. `findings.py trigger BASE..HEAD` still returns no match and prints `not triggered`. The review session then records `security = \"not triggered\"` and does not launch the security reviewer. The same line without the separator is matched."
+evidence = "test"
+reproduction = "tests/contract/test_findings_trigger.py::test_a_pattern_on_an_added_line_that_holds_a_unicode_line_break_matches"
+path = "ordinary"
+effect = "misreport"
+clause = "decided"
+rule = "11, When the security reviewer runs: a line added to any other file under src/ that contains one of the listed patterns sets off the security reviewer"
+plan = "fix"
+outcome = ""
+unlikely = "It needs one of these raw characters before the pattern on an added source line: form feed, vertical tab, lone CR, \\x1c to \\x1e, NEL, U+2028 or U+2029. Python sources rarely hold one except as a page-break line of its own."
+note = "The security reviewer reports the same defect as S2 (M0-F13); one fix commit cites both."
+
+[[finding]]
+id = "M0-F02"
+round = 1
+source = "correctness"
+ref = "C2"
+file = "tests/unit/test_layers.py"
+line = 56
+summary = "The import-rule test recognises a dynamic import only as a bare `__import__(...)` or an attribute call `<x>.import_module(...)`. So `from importlib import import_module` followed by `import_module(...)` in a restricted layer is never reported, whether the name is a literal or computed."
+scenario = "src/vmseed/guest/registry.py contains `from importlib import import_module` and `import_module('vmseed.host.virsh')`. `violations()` returns an empty list, so `test_the_package_follows_the_import_rule` stays green while guest imports host. The same import with a computed name in src/vmseed/config/models.py is not refused either. Yet the module docstring says a dynamic import whose name is not a literal is refused in a restricted layer. Four more spellings, tested the same way, also return no violation: `importlib.import_module('.virsh', 'vmseed.host')` (the relative literal is dropped by the filter at line 85), `importlib.__import__('vmseed.host.virsh')`, `builtins.__import__('vmseed.host.virsh')` and `pkgutil.resolve_name('vmseed.host.virsh')`."
+evidence = "test"
+reproduction = "tests/unit/test_layers.py::test_a_dynamic_import_through_a_bare_import_module_is_found"
+path = "ordinary"
+effect = "none"
+clause = "decided"
+rule = "01 Import rule (\"A test enforces this\"); M0 scope: the test that enforces the import rule between layers"
+plan = "fix"
+outcome = ""
+
+[[finding]]
+id = "M0-F03"
+round = 1
+source = "correctness"
+ref = "C3"
+file = ".claude/skills/milestone-review/SKILL.md"
+line = 65
+summary = "The brief says the reviewer's worktree is checked out at the reviewed head, but it was at main's tip and tag v0-bash (the Bash tool)."
+scenario = "The reviewer rebuilt the reviewed head's files with `git show`, checked their blob hashes, and ran the tests in a scratch directory inside the worktree. A reviewer that trusted the brief would have reviewed v0. The scratch environment fit: uv hardlinks from its cache, and about 2.9 GB stayed free."
+evidence = "inspection"
+reproduction = "Seen in this round: Claude Code creates an agent's worktree from origin's default branch unless its `worktree.baseRef` setting is `head`. With that setting in the user's settings, the security reviewer's worktree was at the reviewed head (`git worktree list`)."
+path = "ordinary"
+effect = "none"
+clause = ""
+rule = ""
+plan = "question"
+outcome = ""
+question = "M0-Q1"
+note = "Note 1 of the correctness report. A note has no id, so ref continues after the reviewer's claims. The note names A-REV-WORKTREE; its commit hashes are replaced by what they name."
+
+[[finding]]
+id = "M0-F04"
+round = 1
+source = "correctness"
+ref = "C4"
+file = "docs/spec/10-assumptions.md"
+line = 41
+summary = "A-GH-GATE and A-REV-GATE do not cover a push made after the owner approved."
+scenario = "The ruleset has no required status check, and a red review-record only skips approve. So the open point is whether an earlier successful merge-approval deployment still counts for a new head. If it does, commits pushed after an approval, a reopened record included, can be merged without a new approval, by the token too, since it holds Contents write. A throwaway-PR check would settle it: approve, push one commit, read the merge state."
+evidence = "inspection"
+reproduction = "Decided only on GitHub: on a throwaway pull request, approve, push one commit, read the merge state."
+path = "ordinary"
+effect = "none"
+clause = ""
+rule = ""
+plan = "question"
+outcome = ""
+question = "M0-Q2"
+note = "Note 2 of the correctness report. A note has no id, so ref continues after the reviewer's claims. The security reviewer makes the same point (M0-F17)."
+
+[[finding]]
+id = "M0-F05"
+round = 1
+source = "correctness"
+ref = "C5"
+file = "docs/spec/11-review.md"
+line = 369
+summary = "Question (the spec is inconsistent): 11 says `open` 'prints ... questions with no answer', and 09's definition of done says every question has the user's answer. But 11's Evidence and Outcomes sections say a finding that ends not confirmed or not reproduced needs no answer."
+scenario = "Findings.py follows the second reading, as its docstring says. So a record can close, and pass the gate, with an unanswered question."
+evidence = "inspection"
+reproduction = "Read docs/spec/11-review.md, 'The tool' (open) and 'Outcomes'; docs/spec/09-milestones.md, 'Definition of done'; and `open_items` in tools/findings.py."
+path = "ordinary"
+effect = "none"
+clause = ""
+rule = ""
+plan = "question"
+outcome = ""
+question = "M0-Q3"
+note = "Note 3 of the correctness report. A note has no id, so ref continues after the reviewer's claims."
+
+[[finding]]
+id = "M0-F06"
+round = 1
+source = "correctness"
+ref = "C6"
+file = "tools/findings.py"
+line = 736
+summary = "Question (the spec is inconsistent): the Clause table requires a sibling's root to be planned `fix`. The 'Siblings' paragraph searches around 'a finding fixed under a clause', which includes a question finding fixed after the user's answer."
+scenario = "`check` accepts a root whose plan is `question` (tools/findings.py:736-747)."
+evidence = "inspection"
+reproduction = "Read docs/spec/11-review.md, the Clause table (sibling) and 'Fixing' (Siblings); and `_grade_problems` in tools/findings.py."
+path = "ordinary"
+effect = "none"
+clause = ""
+rule = ""
+plan = "question"
+outcome = ""
+question = "M0-Q4"
+note = "Note 4 of the correctness report. A note has no id, so ref continues after the reviewer's claims."
+
+[[finding]]
+id = "M0-F07"
+round = 1
+source = "correctness"
+ref = "C7"
+file = "tools/findings.py"
+line = 782
+summary = "Question (the spec is silent): `check` accepts `picked = true` together with a `recorded:` outcome."
+scenario = "A record can then close, and the gate pass, with a finding the user picked still unfixed."
+evidence = "inspection"
+reproduction = "Read docs/spec/11-review.md, 'Outcomes' (record); and `_outcome_problems` in tools/findings.py."
+path = "ordinary"
+effect = "none"
+clause = ""
+rule = ""
+plan = "question"
+outcome = ""
+question = "M0-Q5"
+note = "Note 5 of the correctness report. A note has no id, so ref continues after the reviewer's claims."
+
+[[finding]]
+id = "M0-F08"
+round = 1
+source = "correctness"
+ref = "C8"
+file = "tools/findings.py"
+line = 1148
+summary = "Question (the spec is silent): the gate reads the record from the pull request's merge commit and never ties it to the head."
+scenario = "A later pull request from a branch named after a milestone whose closed record is already on v2 (for example m0-followup) passes review-record at once."
+evidence = "inspection"
+reproduction = "Read `gate` in tools/findings.py and docs/spec/11-review.md, 'The gate in CI'."
+path = "ordinary"
+effect = "none"
+clause = ""
+rule = ""
+plan = "question"
+outcome = ""
+question = "M0-Q6"
+note = "Note 6 of the correctness report. A note has no id, so ref continues after the reviewer's claims. The security reviewer makes the same point, wider (M0-F15)."
+
+[[finding]]
+id = "M0-F09"
+round = 1
+source = "correctness"
+ref = "C9"
+file = "tools/findings.py"
+line = 201
+summary = "Spec: the home-path rule refuses guest-side paths in root's or a guest user's home directory, such as the authorized_keys files that SSH and account findings will cite from M3 on."
+scenario = "Rewording is the only way past `check`."
+evidence = "inspection"
+reproduction = "Read HOME_PATH in tools/findings.py: a guest path under root's home directory or a guest user's home directory matches it."
+path = "ordinary"
+effect = "none"
+clause = ""
+rule = ""
+plan = "question"
+outcome = ""
+question = "M0-Q7"
+note = "Note 7 of the correctness report. A note has no id, so ref continues after the reviewer's claims. The security reviewer raises the other side of the same rule (M0-F14)."
+
+[[finding]]
+id = "M0-F10"
+round = 1
+source = "correctness"
+ref = "C10"
+file = "docs/spec/11-review.md"
+line = 265
+summary = "Spec: the trigger patterns are literal substrings."
+scenario = "In a file under src/ that is not a trigger path (cli.py, plan.py, errors.py, config/schema.py), `from os import unlink`, `from shutil import rmtree`, `from tempfile import mkstemp` and `from yaml import load` never match, nor do the bare calls that follow them."
+evidence = "inspection"
+reproduction = "Read the pattern list in docs/spec/11-review.md, 'When the security reviewer runs', and TRIGGER_PATTERNS in tools/findings.py."
+path = "ordinary"
+effect = "none"
+clause = ""
+rule = ""
+plan = "question"
+outcome = ""
+question = "M0-Q8"
+note = "Note 8 of the correctness report. A note has no id, so ref continues after the reviewer's claims. The security reviewer makes a related point about the trigger's paths (M0-F19)."
+
+[[finding]]
+id = "M0-F11"
+round = 1
+source = "correctness"
+ref = "C11"
+file = "docs/spec/11-review.md"
+line = 86
+summary = "Spec: M0's range changes 1 618 lines of product code, so 11 asks for one correctness run per scope."
+scenario = "But no file of the range is in `core`, and src/vmseed/__init__.py, __main__.py and py.typed belong to neither scope. ROUND_VALUES also has no value for a run over one scope."
+evidence = "inspection"
+reproduction = "Read the scopes under 'The round' in docs/spec/11-review.md and ROUND_VALUES in tools/findings.py. In this round the correctness reviewer ran once, over the range's edge paths, the files no scope names, the tests, the build files and the documents the range changed; the header says `ran`."
+path = "ordinary"
+effect = "none"
+clause = ""
+rule = ""
+plan = "question"
+outcome = ""
+question = "M0-Q9"
+note = "Note 9 of the correctness report. A note has no id, so ref continues after the reviewer's claims."
+
+[[finding]]
+id = "M0-F12"
+round = 1
+source = "security"
+ref = "S1"
+file = ".gitignore"
+line = 1
+summary = "The v2 .gitignore drops v0's rules for the Bash tool's private files (`/fedora-cloud.conf` and `/temp/` in the root file, and everything under `tools/diagnostics-results/` through the deleted nested .gitignore), so in a checkout that holds them they become untracked, unignored files that `git add --all` stages."
+scenario = "A clone used with the Bash tool holds `fedora-cloud.conf` at the root (v0's documented place for its personal config: image directories, key paths, user names) and diagnostics in `tools/diagnostics-results/` (where v0's guest-diagnostics.sh told the user to bring its output: user names, the share directory, firewall sources, Samba users, cloud-init logs). On `main` both are ignored. After `git switch v2` the nested .gitignore is removed from the tree and the root .gitignore no longer names them: `git status` lists them as untracked, `git add --all` stages them, and an ordinary commit and push publishes them in the public repository."
+evidence = "test"
+reproduction = "tests/contract/test_gitignore.py::test_a_private_file_of_the_bash_tool_is_not_staged_by_add_all"
+path = "ordinary"
+effect = "exposed"
+clause = ""
+rule = ""
+plan = "fix"
+outcome = ""
+unlikely = "It needs a clone that held v0's private files when it moved to v2 (in this development clone no local exclude rule covers those names either), then an `add --all` and a push by someone who does not read the untracked list in `git status`."
+note = "The correctness reviewer names the same point in a note, not as a claim."
+
+[[finding]]
+id = "M0-F13"
+round = 1
+source = "security"
+ref = "S2"
+file = "tools/findings.py"
+line = 1112
+summary = "`trigger` reads the diff with `str.splitlines()`, which also breaks lines on characters git does not end a line on (form feed, vertical tab, 0x1c-0x1e, a lone CR, NEL, U+2028, U+2029), so a pattern that follows one of them on an added line is not taken as added and the security trigger is missed."
+scenario = "A range adds to src/vmseed/cli.py, a file outside the trigger paths, the single line `MARK = (\"<0x1e>\", subprocess.PIPE)` with a raw record-separator character inside the string. git counts one added line, and it contains `subprocess`. `findings.py trigger BASE..HEAD` returns no match and prints `not triggered` (tools/findings.py:1243), so the round's header would record `security = \"not triggered\"` and the security reviewer would not run. The same holds for a form feed opening the line, a lone CR between two statements, and U+2028 in a string."
+evidence = "test"
+reproduction = "tests/contract/test_findings_trigger.py::test_a_pattern_after_a_character_git_does_not_end_a_line_on_matches"
+path = "ordinary"
+effect = "misreport"
+clause = "decided"
+rule = "11 When the security reviewer runs: a line added to any other file under src/ that contains one of the patterns sets it off"
+plan = "fix"
+outcome = ""
+unlikely = "Honest code rarely holds a raw control or separator character before a pattern on the same line, and every added occurrence in the range would need one. The raw VT, 0x1c-0x1e and NEL forms inside a string literal pass `ruff format --check` and `ruff check` with this project's configuration; the form-feed and lone-CR forms are rewritten by ruff format and U+2028 is refused by RUF001, but non-Python files under src/ are not formatted at all."
+note = "The same defect as C1 (M0-F01); one fix commit cites both."
+
+[[finding]]
+id = "M0-F14"
+round = 1
+source = "security"
+ref = "S3"
+file = "tools/findings.py"
+line = 201
+summary = "`check` refuses home-directory paths only, as 11 specifies, while the file's rule is wider (no local path, account name or host name)."
+scenario = "`/tmp/pytest-of-<account>/...`, common in pytest failure output, and any text in a TOML comment pass `check`. A question whether the tool should cover more."
+evidence = "inspection"
+reproduction = "Read docs/spec/11-review.md, 'The findings file' (its text rules) and 'The tool' (check); and HOME_PATH in tools/findings.py."
+path = "ordinary"
+effect = "none"
+clause = ""
+rule = ""
+plan = "question"
+outcome = ""
+question = "M0-Q10"
+note = "Note 3 of the security report. A note has no id, so ref continues after the reviewer's claims. The correctness reviewer raises the other side of the same rule (M0-F09)."
+
+[[finding]]
+id = "M0-F15"
+round = 1
+source = "security"
+ref = "S4"
+file = "tools/findings.py"
+line = 1148
+summary = "The gate never compares the last round's `head` with the pull request's head, and reads the record from the merge commit."
+scenario = "Commits pushed after the record closed, or a later pull request on another `m<N>-...` branch of a milestone whose closed record is already on `v2`, get the approval request with no new round. 11 is silent on both; its rule that commits after the reviewed head get a round of their own is not held by CI."
+evidence = "inspection"
+reproduction = "Read `gate` in tools/findings.py and docs/spec/11-review.md, 'The round' (commits after the reviewed head) and 'The gate in CI'."
+path = "ordinary"
+effect = "none"
+clause = ""
+rule = ""
+plan = "question"
+outcome = ""
+question = "M0-Q6"
+note = "Note 4 of the security report. A note has no id, so ref continues after the reviewer's claims. The same point as M0-F08, wider."
+
+[[finding]]
+id = "M0-F16"
+round = 1
+source = "security"
+ref = "S5"
+file = ".github/workflows/approval.yml"
+line = 38
+summary = "`review-record` runs the pull request's own tools/findings.py (a pull_request event), so a pull request that changes the tool decides its own gate, unlike 08's catalog-check, which runs the base branch's tool."
+scenario = "The owner's approval is still required and a non-milestone branch passes by design, so no existing attacker gains anything; a question whether the gate is meant to hold against the build session."
+evidence = "inspection"
+reproduction = "Read .github/workflows/approval.yml and docs/spec/08-testing.md, 'CI workflows' (catalog-check)."
+path = "ordinary"
+effect = "none"
+clause = ""
+rule = ""
+plan = "question"
+outcome = ""
+question = "M0-Q11"
+note = "Note 5 of the security report. A note has no id, so ref continues after the reviewer's claims."
+
+[[finding]]
+id = "M0-F17"
+round = 1
+source = "security"
+ref = "S6"
+file = "docs/spec/10-assumptions.md"
+line = 41
+summary = "A-GH-GATE records that the approve job's deployment has the head branch as its ref; whether the required-deployment rule matches deployments per head SHA or per branch name is not recorded."
+scenario = "If per name, an approval given at head A would stay valid after a push B whose approve job does not run (record reopened, review-record red), and a fork branch with the same name could share it. Decide with a throwaway pull request: approve at A, push B that turns review-record red, read mergeability."
+evidence = "inspection"
+reproduction = "Decided only on GitHub: on a throwaway pull request, approve at one head, push a commit that turns review-record red, read mergeability."
+path = "ordinary"
+effect = "none"
+clause = ""
+rule = ""
+plan = "question"
+outcome = ""
+question = "M0-Q2"
+note = "Note 6 of the security report. A note has no id, so ref continues after the reviewer's claims. The same point as M0-F04."
+
+[[finding]]
+id = "M0-F18"
+round = 1
+source = "security"
+ref = "S7"
+file = "docs/adr/0023-execution-process.md"
+line = 47
+summary = "Outside the range: `main` still carries v0's ci.yml with no `permissions` block and default checkout credentials, and a same-repository pull request into `main` runs its own tests/run.sh with the repository's default GITHUB_TOKEN."
+scenario = "If that default is read and write, code pushed without the workflow permission gets `deployments: write`, which ADR 0023's premise ('as long as the token cannot change workflows') does not account for. Worth checking the repository's default workflow permissions."
+evidence = "inspection"
+reproduction = "Decided only on GitHub: the repository's default workflow permissions (Settings, Actions, General). The session's token cannot read them (HTTP 403)."
+path = "ordinary"
+effect = "none"
+clause = ""
+rule = ""
+plan = "question"
+outcome = ""
+question = "M0-Q12"
+note = "Note 7 of the security report. A note has no id, so ref continues after the reviewer's claims. It is about main, outside the range."
+
+[[finding]]
+id = "M0-F19"
+round = 1
+source = "security"
+ref = "S8"
+file = "docs/spec/11-review.md"
+line = 255
+summary = "The trigger list of 11 leaves out pyproject.toml, uv.lock and constraints.txt (dependency changes) and .claude/skills/milestone-review/ (the reviewers' briefs); a range changing only those sets off no security review."
+scenario = "Its patterns are literal text, so string-built names (`import_module('sub' + 'process')`) evade it by design; S2 is only about a line that does contain a pattern."
+evidence = "inspection"
+reproduction = "Read the path list in docs/spec/11-review.md, 'When the security reviewer runs', and TRIGGER_PATHS in tools/findings.py."
+path = "ordinary"
+effect = "none"
+clause = ""
+rule = ""
+plan = "question"
+outcome = ""
+question = "M0-Q8"
+note = "Note 8 of the security report. A note has no id, so ref continues after the reviewer's claims. The correctness reviewer makes a related point about the patterns (M0-F10)."
+
+[[question]]
+id = "M0-Q1"
+findings = [
+  "M0-F03",
+]
+text = "An agent launched with `isolation: worktree` got a worktree at main's tip, not at the reviewed head its brief names, because Claude Code's `worktree.baseRef` defaults to `fresh` (origin's default branch). How is it fixed before the security reviewer runs?"
+options = [
+  "`worktree.baseRef = head` in the user's Claude Code settings",
+  "The same key in a git-ignored project-local settings file",
+  "Go on without a fix",
+]
+recommendation = "`worktree.baseRef = head` in the user's Claude Code settings"
+assumption = "None: asked and answered before the security reviewer was launched."
+answer = "`worktree.baseRef = head` in the user's Claude Code settings, set by the user on 2026-11-21. The security reviewer's worktree was then at the reviewed head."
+
+[[question]]
+id = "M0-Q2"
+findings = [
+  "M0-F04",
+  "M0-F17",
+]
+text = "Does a merge-approval deployment approved at one head still count after a new push? A-GH-GATE and A-REV-GATE do not say. If it does, commits pushed after an approval can be merged without a new one, by the session's token too. Only GitHub can decide it."
+options = [
+  "Add `review-record` as a required status check to the rulesets of v2 and main, then show on a throwaway pull request that a push after the approval blocks the merge; record it in 10-assumptions",
+  "Only check it on a throwaway pull request (approve, push one commit, read the merge state), and decide after",
+  "Accept it as a limit: the owner reads the head before merging; record it in 10-assumptions",
+]
+recommendation = "Add `review-record` as a required status check to the rulesets of v2 and main, then show on a throwaway pull request that a push after the approval blocks the merge; record it in 10-assumptions"
+assumption = "The gate as built; the point stays unverified."
+answer = ""
+
+[[question]]
+id = "M0-Q3"
+findings = [
+  "M0-F05",
+]
+text = "11's `open` row and 09's definition of done want every question answered, while 11's Outcomes table lets a question's findings end `not confirmed` or `not reproduced` without an answer, and findings.py follows the Outcomes table. Which rule holds?"
+options = [
+  "The Outcomes table: a question whose findings all ended without needing an answer does not keep the record open; align 11's `open` row and 09 in a process amendment",
+  "Every question needs an answer: `open` and the gate list any unanswered question; change findings.py in this review",
+]
+recommendation = "The Outcomes table: a question whose findings all ended without needing an answer does not keep the record open; align 11's `open` row and 09 in a process amendment"
+assumption = "As built: the Outcomes table."
+answer = ""
+
+[[question]]
+id = "M0-Q4"
+findings = [
+  "M0-F06",
+]
+text = "11's Clause table requires a sibling's root to be planned `fix`; its Siblings paragraph searches around any finding fixed under a clause, which includes a question finding fixed after the user's answer; findings.py accepts a root planned `question`. Which rule holds?"
+options = [
+  "A root holds a clause, or an ordinary path with an effect other than blocked, whatever its plan, as built; align the Clause table in a process amendment",
+  "A root must be planned `fix`; change findings.py in this review",
+]
+recommendation = "A root holds a clause, or an ordinary path with an effect other than blocked, whatever its plan, as built; align the Clause table in a process amendment"
+assumption = "As built."
+answer = ""
+
+[[question]]
+id = "M0-Q5"
+findings = [
+  "M0-F07",
+]
+text = "findings.py accepts `picked = true` with a `recorded:` outcome, so a record can close with a finding the user picked still unfixed. 11 is silent. Should `check` refuse it?"
+options = [
+  "Yes: `check` refuses `picked = true` with any outcome but `fixed`; change findings.py in this review",
+  "No: keep as built",
+]
+recommendation = "Yes: `check` refuses `picked = true` with any outcome but `fixed`; change findings.py in this review"
+assumption = "As built."
+answer = ""
+
+[[question]]
+id = "M0-Q6"
+findings = [
+  "M0-F08",
+  "M0-F15",
+]
+text = "The gate reads the record from the pull request's merge commit and never compares the last round's head with the pull request's head. Commits pushed after the record closed, or a later pull request on another m<N>- branch of a milestone whose closed record is already on v2, get the approval request with no new round. 11 is silent. What should hold?"
+options = [
+  "A process amendment designs a gate that ties the record to the head; until then the owner checks at approval that every commit after the last round's head cites a finding or only changes the record",
+  "Keep as built: the owner's check at approval is the rule; write it into 11",
+]
+recommendation = "A process amendment designs a gate that ties the record to the head; until then the owner checks at approval that every commit after the last round's head cites a finding or only changes the record"
+assumption = "As built; the owner checks the commits after the reviewed head at approval."
+answer = ""
+
+[[question]]
+id = "M0-Q7"
+findings = [
+  "M0-F09",
+]
+text = "The home-path rule of `check` refuses guest-side paths under root's or a guest user's home directory, such as the authorized_keys files that SSH and account findings will cite from M3 on. How should a record name them?"
+options = [
+  "A process amendment before M3 defines a form for guest-side paths that `check` accepts",
+  "Keep as built: findings describe guest paths in words",
+]
+recommendation = "A process amendment before M3 defines a form for guest-side paths that `check` accepts"
+assumption = "As built."
+answer = ""
+
+[[question]]
+id = "M0-Q8"
+findings = [
+  "M0-F10",
+  "M0-F19",
+]
+text = "The security trigger misses `from os import unlink`, `from shutil import rmtree`, `from tempfile import mkstemp` and `from yaml import load`, and the bare calls after them, in files under src/ outside the trigger paths; and it has no path for pyproject.toml, uv.lock, constraints.txt or .claude/skills/milestone-review/. The trigger changes only by the user's decision. Widen it?"
+options = [
+  "Widen now, in 11 and findings.py: the patterns `from os import`, `from shutil import`, `from tempfile import` and `from yaml import`; the paths pyproject.toml, uv.lock, constraints.txt and .claude/skills/milestone-review/",
+  "Widen only the paths now",
+  "Keep as built, and decide later on what `findings.py count` shows",
+]
+recommendation = "Widen now, in 11 and findings.py: the patterns `from os import`, `from shutil import`, `from tempfile import` and `from yaml import`; the paths pyproject.toml, uv.lock, constraints.txt and .claude/skills/milestone-review/"
+assumption = "As built."
+answer = ""
+
+[[question]]
+id = "M0-Q9"
+findings = [
+  "M0-F11",
+]
+text = "Above 1 000 changed lines 11 asks for one correctness run per scope, but in M0's range no file is in `core`, three files belong to neither scope, and the header has no value for a run over one scope. This round ran the reviewer once over every path of the range, recorded as `ran`. What should 11 say?"
+options = [
+  "A scope with no changed file is not run, a file of no scope joins `edge`, and a single run is recorded as `ran`, as done here; write it into 11 in a process amendment",
+  "As above, but the header names the scope that ran (`ran: edge`); change 11 and findings.py in a process amendment",
+]
+recommendation = "A scope with no changed file is not run, a file of no scope joins `edge`, and a single run is recorded as `ran`, as done here; write it into 11 in a process amendment"
+assumption = "One run over every path of the range, recorded as `ran`."
+answer = ""
+
+[[question]]
+id = "M0-Q10"
+findings = [
+  "M0-F14",
+]
+text = "The findings file must hold no local path, account name or host name, but `check` refuses home-directory paths only, as 11's tool table says: `/tmp/pytest-of-<account>/...` and text in a TOML comment pass. Should `check` refuse more?"
+options = [
+  "Keep as built: `check` refuses what it can recognise; the rest is the review session's care and the user's reading",
+  "Widen `check` in a process amendment: also refuse absolute paths under /tmp and /var/tmp",
+]
+recommendation = "Keep as built: `check` refuses what it can recognise; the rest is the review session's care and the user's reading"
+assumption = "As built."
+answer = ""
+
+[[question]]
+id = "M0-Q11"
+findings = [
+  "M0-F16",
+]
+text = "`review-record` runs the pull request's own tools/findings.py, so a pull request that changes the tool decides its own gate; 08's catalog-check runs the base branch's tool instead. Is the gate meant to hold against the build session?"
+options = [
+  "Yes: once v2 holds findings.py (after M0 merges), approval.yml runs v2's tool on the pull request's record; a process amendment with its own review",
+  "No: the owner's approval and the security review of tools/ are enough; write it into 11",
+]
+recommendation = "Yes: once v2 holds findings.py (after M0 merges), approval.yml runs v2's tool on the pull request's record; a process amendment with its own review"
+assumption = "As built."
+answer = ""
+
+[[question]]
+id = "M0-Q12"
+findings = [
+  "M0-F18",
+]
+text = "On main, v0's ci.yml has no permissions block, and a same-repository pull request into main runs its own tests/run.sh with the repository's default workflow token. If that default is read and write, code pushed without the workflow permission gets `deployments: write`, which ADR 0023's premise does not account for. The session's token cannot read the setting."
+options = [
+  "The user makes sure the repository's default workflow permissions are read-only (Settings, Actions, General) and says what they were; the result goes into 10-assumptions",
+  "As above, and main's workflows also get a `permissions` block, in a pull request of their own into main",
+  "Keep as is, and record the limit in ADR 0023",
+]
+recommendation = "The user makes sure the repository's default workflow permissions are read-only (Settings, Actions, General) and says what they were; the result goes into 10-assumptions"
+assumption = "Unverified: the repository's default workflow permission is unknown."
+answer = ""
