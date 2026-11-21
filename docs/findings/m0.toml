@@ -16,7 +16,7 @@ security_trigger = [
   "tools/guest-diagnostics.sh",
 ]
 verifier = "not needed"
-fix_review = ""
+fix_review = "ran"
 
 [[finding]]
 id = "M0-F01"
@@ -436,6 +436,108 @@ outcome = ""
 root = "M0-F02"
 note = "Found by the sibling search of M0-F02: another standard-library function that imports by name."
 
+[[finding]]
+id = "M0-F22"
+round = 1
+source = "fix-review"
+ref = "R1"
+file = "tests/unit/test_layers.py"
+line = 123
+summary = "The fix resolves a relative dynamic import only when the name starts with a dot. So when `__import__` or `importlib.__import__` is made relative by its `level` argument, the checker reads the name as an absolute top-level name, drops it with the vmseed-only filter, and neither reports it nor refuses it as unknown."
+scenario = "src/vmseed/guest/registry.py runs `__import__('host.virsh', globals(), None, (), 2)`, which imports vmseed.host. The same holds with `level=2` given by keyword, or with the same call through `importlib.__import__`. `_dynamic_target` returns 'host.virsh' because the name has no leading dot (line 123). The filter at line 167 keeps only names under 'vmseed', so `violations()` returns an empty list: the import-rule test stays green while guest imports host. The commit names 'dropped a relative name' as the mistake it fixes, and it adds `importlib.__import__` and `builtins.__import__` to the list. But it resolves only the leading-dot form that `import_module` and `find_spec` take. The fix left this half done rather than introducing it: the three cases also fail with the checker before the fix."
+evidence = "test"
+reproduction = "tests/unit/test_layers.py::test_a_relative_dunder_import_is_found"
+path = "ordinary"
+effect = "none"
+clause = "decided"
+rule = "01 Import rule (\"A test enforces this\"); M0 scope: the test that enforces the import rule between layers"
+plan = "fix"
+outcome = ""
+about = "M0-F02"
+unlikely = "Current code rarely calls __import__ with a level; import_module with a leading-dot name is the usual way to import relatively by name."
+
+[[finding]]
+id = "M0-F23"
+round = 1
+source = "fix-review"
+ref = "R2"
+file = "tests/unit/test_layers.py"
+line = 61
+summary = "DYNAMIC_IMPORTS still leaves out standard-library calls that import the package or module a string names: `importlib.resources.files`, `pkgutil.get_data` and `pydoc.locate`. This is the mistake of M0-F02, M0-F20 and M0-F21, so the import-rule test passes while a restricted layer imports a forbidden one through these calls."
+scenario = "src/vmseed/guest/registry.py calls `importlib.resources.files('vmseed.host')`. Three other spellings behave the same: `files('vmseed.host')` after `from importlib.resources import files`, `pkgutil.get_data('vmseed.host', 'data.txt')`, and `pydoc.locate('vmseed.host.virsh')`. Each imports vmseed.host, and `violations()` returns an empty list. The commit body names this mistake ('runpy.run_module and importlib.util.find_spec also import by name and are not counted'), but the sibling search stopped at those two names. The rest of the importlib.resources API (read_text, open_binary and the others) takes the same path; not run."
+evidence = "test"
+reproduction = "tests/unit/test_layers.py::test_a_lookup_that_imports_the_package_it_names_is_found"
+path = "ordinary"
+effect = "none"
+clause = "decided"
+rule = "01 Import rule (\"A test enforces this\"); M0 scope: the test that enforces the import rule between layers"
+plan = "fix"
+outcome = ""
+about = "M0-F02"
+unlikely = "It needs a restricted layer to read a resource of, or locate an object in, a forbidden layer's package by name; vmseed's data is meant for vmseed.data, which no rule forbids."
+
+[[finding]]
+id = "M0-F24"
+round = 1
+source = "fix-review"
+ref = "R3"
+file = "tests/unit/test_layers.py"
+line = 125
+summary = "The test now refuses, as 'a module named at run time', a relative dynamic import whose name is a literal and whose package is given as `__package__`. Its target is known and in the same layer, and before the fix the import-rule test passed it."
+scenario = "src/vmseed/guest/registry.py runs `importlib.import_module('.controls', __package__)`, and src/vmseed/guest/controls.py exists: guest imports guest, which the rule allows. `_dynamic_target` takes the package only from a string literal (lines 125-128) and returns None for `__package__` (lines 129-130). `imports_of` then adds UNKNOWN (line 162), and `violations()` reports 'vmseed.guest.registry imports <a module named at run time>'. So `test_the_package_follows_the_import_rule`, part of the `uv run pytest` gate of CLAUDE.md, fails on code that follows the rule. The module docstring says only a name that is not a literal is refused. The same test passes with the checker before the fix. `importlib.util.find_spec('.x', __package__)`, counted since the fix of M0-F21, goes through the same lines."
+evidence = "test"
+reproduction = "tests/unit/test_layers.py::test_a_literal_relative_import_within_the_layer_passes"
+path = "ordinary"
+effect = "blocked"
+clause = ""
+rule = ""
+plan = "fix"
+outcome = ""
+about = "M0-F02"
+unlikely = "A literal relative name given to import_module is rare: the same import is usually a static relative import, and import_module serves computed names, which the test refuses by design."
+
+[[finding]]
+id = "M0-F25"
+round = 1
+source = "fix-review"
+ref = "R4"
+file = "docs/spec/11-review.md"
+line = 363
+summary = "11 is silent on a picked finding whose test written first does not fail: plan `record` allows no `not reproduced`, and `check` now refuses `recorded:` for a picked finding."
+scenario = "So the record either stays open or says `fixed` for a fix that was not made. This mostly concerns a picked inspection claim, which nobody verified."
+evidence = "inspection"
+reproduction = "Read docs/spec/11-review.md, 'Outcomes' (record), and `_outcome_problems` in tools/findings.py."
+path = "ordinary"
+effect = "none"
+clause = ""
+rule = ""
+plan = "question"
+outcome = ""
+about = "M0-F07"
+question = "M0-Q13"
+note = "Note 8 of the fix review's report. A note has no id, so ref continues after the reviewer's claims. Brought out by the fix of M0-F07."
+
+[[finding]]
+id = "M0-F26"
+round = 1
+source = "fix-review"
+ref = "R5"
+file = "docs/spec/11-review.md"
+line = 270
+summary = "The literal patterns chosen in M0-Q8 miss a name added inside an existing parenthesised from-import, and a bare call added in a later range than its from-import."
+scenario = "Suppose a range adds `rmtree,` inside an existing parenthesised `from shutil import (...)` and adds a bare `rmtree(path)` call. No added line holds a pattern, so `trigger` matches nothing (checked with a scratch contract test). A bare call added in a later range than its from-import is not matched either."
+evidence = "inspection"
+reproduction = "Read the pattern block in docs/spec/11-review.md, 'When the security reviewer runs', and `_patterns_added` in tools/findings.py."
+path = "ordinary"
+effect = "none"
+clause = ""
+rule = ""
+plan = "question"
+outcome = ""
+about = "M0-F10"
+question = "M0-Q14"
+note = "Note 9 of the fix review's report. A note has no id, so ref continues after the reviewer's claims. Brought out by the fix of M0-F10."
+
 [[question]]
 id = "M0-Q1"
 findings = [
@@ -610,3 +712,31 @@ options = [
 recommendation = "The user makes sure the repository's default workflow permissions are read-only (Settings, Actions, General) and says what they were; the result goes into 10-assumptions"
 assumption = "Unverified: the repository's default workflow permission is unknown."
 answer = "Chosen by the user on 2026-11-21: The user makes sure the repository's default workflow permissions are read-only (Settings, Actions, General) and says what they were; the result goes into 10-assumptions"
+
+[[question]]
+id = "M0-Q13"
+findings = [
+  "M0-F25",
+]
+text = "11 is silent on a picked finding whose test, written first, does not fail: plan `record` allows no `not reproduced`, and `check` now refuses a `recorded:` outcome for a picked finding, so such a record either stays open or says `fixed` for a fix that was not made. What should hold?"
+options = [
+  "A picked finding may end `not reproduced`: 11's Outcomes table and findings.py change in a process amendment; until then a session that meets the case asks the user",
+  "Allow it now, in this review, after the fix review has run",
+]
+recommendation = "A picked finding may end `not reproduced`: 11's Outcomes table and findings.py change in a process amendment; until then a session that meets the case asks the user"
+assumption = "As built; no finding is picked yet."
+answer = ""
+
+[[question]]
+id = "M0-Q14"
+findings = [
+  "M0-F26",
+]
+text = "The literal patterns chosen in M0-Q8 miss a name added inside an existing parenthesised from-import, and a bare call added in a later range than its from-import. Is that an accepted limit?"
+options = [
+  "Accept it as a limit of literal patterns, and write it into 11 in the process amendment",
+  "A process amendment designs a trigger that reads imports instead of literal text",
+]
+recommendation = "Accept it as a limit of literal patterns, and write it into 11 in the process amendment"
+assumption = "As built."
+answer = ""
