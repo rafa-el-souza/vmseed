@@ -19,7 +19,11 @@ someone who installs the tool.
 Python) and `rich` (tables and progress).
 
 **Development:** `uv`, `ruff`, `pyright` in strict mode, `pytest`,
-`pytest-cov`, `hypothesis`.
+`pytest-cov`, `hypothesis`. Every development tool is pinned by `uv.lock`.
+`pyright` is installed with its `nodejs` extra: its wheel carries the type
+checker, and the extra brings Node.js as a locked wheel. Without it, the
+wrapper downloads Node.js the first time it runs on a machine that lacks one
+(decided with the user on 2026-11-21, during M0).
 
 **Rules:**
 - Structured artifacts are built as data and serialised. No template engine.

@@ -35,6 +35,9 @@ Checked directly, on the dev VM or in the primary source.
 | V-GH-TOKEN | The dev VM's token is fine-grained and limited to this repository: it can write contents and pull requests, and is refused for administration, deployments, commit statuses, Actions writes, secrets, variables and webhooks. The workflow permission cannot be probed without changing a workflow, so M0 proves it | Read requests, and write requests built to fail validation, 2026-11-21 |
 | V-GH-CLOUD | Since 2026-10-28 standard Linux runners may run on a second cloud; nothing is stated about KVM there | GitHub changelog, read 2026-11-21 |
 | V-NAMES | Upstream file names and release numbers in 06 | Mirrors read on 2026-11-20 |
+| V-PYRIGHT-NODE | The `pyright` wheel carries the type checker itself. It takes Node.js from the `nodejs-wheel-binaries` wheel when that is installed (the `nodejs` extra), otherwise from `PATH`, otherwise it downloads it with `nodeenv` on first run. Unless `PYRIGHT_PYTHON_IGNORE_WARNINGS` is set, each run also asks PyPI whether a newer version exists | Wheel source of pyright 1.1.414 read, and an offline run on the dev VM that used the locked Node.js and downloaded nothing, 2026-11-21 |
+| V-UV-BUILD | uv builds a project whose backend is `uv_build`, in a version range that includes uv's own version, by itself ("direct build"): nothing outside `uv.lock` is downloaded to install the project | Offline `uv sync` on the dev VM, uv 0.13.7, 2026-11-21 |
+| V-UV-CONSTRAINTS | `uv tool install --constraints FILE` installs the versions the file pins, but does not check the hashes it carries: an install with every hash of one package replaced by zeros succeeded. `constraints.txt` therefore pins versions only | Dev VM, uv 0.13.7, 2026-11-21 |
 
 ## Infrastructure and process
 
