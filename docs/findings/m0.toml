@@ -396,6 +396,46 @@ outcome = ""
 question = "M0-Q8"
 note = "Note 8 of the security report. A note has no id, so ref continues after the reviewer's claims. The correctness reviewer makes a related point about the patterns (M0-F10)."
 
+[[finding]]
+id = "M0-F20"
+round = 1
+source = "sibling-search"
+ref = ""
+file = "tests/unit/test_layers.py"
+line = 59
+summary = "The import-rule test does not count `runpy.run_module`, which imports and runs the module a string names, and the packages above it."
+scenario = "src/vmseed/guest/registry.py calls `runpy.run_module('vmseed.host.virsh')`. `violations()` returns an empty list, so the import-rule test stays green while guest runs host."
+evidence = "test"
+reproduction = "tests/unit/test_layers.py::test_a_dynamic_import_through_another_spelling_is_found[runpy.run_module]"
+path = "ordinary"
+effect = "none"
+clause = "sibling"
+rule = ""
+plan = "fix"
+outcome = ""
+root = "M0-F02"
+note = "Found by the sibling search of M0-F02: another standard-library function that imports by name."
+
+[[finding]]
+id = "M0-F21"
+round = 1
+source = "sibling-search"
+ref = ""
+file = "tests/unit/test_layers.py"
+line = 59
+summary = "The import-rule test does not count `importlib.util.find_spec`, which imports the packages above the module a string names."
+scenario = "src/vmseed/guest/registry.py calls `importlib.util.find_spec('vmseed.host.virsh')`, which imports vmseed.host. `violations()` returns an empty list, so the import-rule test stays green while guest imports host."
+evidence = "test"
+reproduction = "tests/unit/test_layers.py::test_a_dynamic_import_through_another_spelling_is_found[importlib.util.find_spec]"
+path = "ordinary"
+effect = "none"
+clause = "sibling"
+rule = ""
+plan = "fix"
+outcome = ""
+root = "M0-F02"
+note = "Found by the sibling search of M0-F02: another standard-library function that imports by name."
+
 [[question]]
 id = "M0-Q1"
 findings = [
