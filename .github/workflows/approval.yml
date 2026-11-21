@@ -1,0 +1,48 @@
+# The owner is asked to approve a merge only once the milestone's review
+# record is closed (docs/spec/11-review.md, "The gate in CI"). The rulesets of
+# v2 and main require a successful deployment to merge-approval, and only the
+# owner can approve that deployment.
+#
+# On a milestone's branch (m<N>-<slug>) review-record stays red until the
+# review session closes docs/findings/m<N>.toml: that is its meaning. On any
+# other branch it passes and says that no record is required.
+name: approval
+
+on:
+  pull_request:
+    branches: [main, v2]
+
+permissions: {}
+
+concurrency:
+  group: approval-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review-record:
+    name: review-record
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: The milestone's review record exists and is closed
+        env:
+          # The branch name comes from the pull request: never in the script.
+          BRANCH: ${{ github.head_ref }}
+        run: python3 tools/findings.py gate "$BRANCH"
+
+  approve:
+    name: approve
+    needs: review-record
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: merge-approval
+    steps:
+      - name: Approved by the owner
+        run: echo "The owner approved the merge of this pull request."
