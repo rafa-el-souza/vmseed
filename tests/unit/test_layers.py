@@ -5,7 +5,8 @@
 and the `__init__` of every package above them, so the rule is checked on
 what a module reaches, not only on what it names. Imports inside functions
 and under `TYPE_CHECKING` count. A dynamic import counts by the module it
-names; one whose name is not a literal is refused in a restricted layer. A
+names; one whose name is not a literal is refused in a restricted layer, and
+`__package__` counts as the literal name of the module's own package. A
 dynamic import is a call of `__import__`, `importlib.import_module`,
 `pkgutil.resolve_name`, `runpy.run_module`, `pkgutil.get_data`,
 `pydoc.locate` or a function of `importlib.resources`, under whatever name
@@ -131,9 +132,12 @@ def _is_dynamic_import(call: ast.Call, called: str) -> bool:
     return called in DYNAMIC_IMPORTS
 
 
-def _literal(node: ast.expr) -> str | None:
+def _literal(node: ast.expr, own_package: str) -> str | None:
+    """A string literal's value; `__package__` stands for the module's package."""
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return node.value
+    if isinstance(node, ast.Name) and node.id == "__package__":
+        return own_package
     return None
 
 
@@ -154,7 +158,7 @@ def _dynamic_target(call: ast.Call, called: str, own_package: str) -> str | None
     """The module a dynamic import names; None when it is not a literal."""
     if called in RESOURCE_LOOKUPS and not call.args and not call.keywords:
         return own_package
-    name = _literal(call.args[0]) if call.args else None
+    name = _literal(call.args[0], own_package) if call.args else None
     if name is None:
         return None
     if called == "pkgutil.resolve_name":
@@ -170,10 +174,10 @@ def _dynamic_target(call: ast.Call, called: str, own_package: str) -> str | None
         return name
     if not name.startswith("."):
         return name
-    package = _literal(call.args[1]) if len(call.args) > 1 else None
+    package = _literal(call.args[1], own_package) if len(call.args) > 1 else None
     for keyword in call.keywords:
         if keyword.arg == "package":
-            package = _literal(keyword.value)
+            package = _literal(keyword.value, own_package)
     if package is None:
         return None
     try:
@@ -566,3 +570,42 @@ def test_the_resources_of_the_callers_own_package_pass(tmp_path: Path) -> None:
     )
 
     assert violations(src) == []
+
+
+def test_a_literal_relative_import_within_the_layer_passes(tmp_path: Path) -> None:
+    src = write_tree(
+        tmp_path,
+        {
+            "guest/registry.py": "import importlib\n"
+            "importlib.import_module('.controls', __package__)\n",
+            "guest/controls.py": "",
+        },
+    )
+
+    assert violations(src) == []
+
+
+def test_a_relative_spec_lookup_within_the_layer_passes(tmp_path: Path) -> None:
+    src = write_tree(
+        tmp_path,
+        {
+            "guest/registry.py": "import importlib.util\n"
+            "importlib.util.find_spec('.controls', __package__)\n",
+            "guest/controls.py": "",
+        },
+    )
+
+    assert violations(src) == []
+
+
+def test_a_relative_import_from_the_package_into_a_forbidden_layer_is_found(
+    tmp_path: Path,
+) -> None:
+    source = "import importlib\nimportlib.import_module('..host.virsh', __package__)\n"
+    files = {"guest/registry.py": source, "host/virsh.py": ""}
+
+    found = violations(write_tree(tmp_path, files))
+
+    assert any(
+        line.startswith("vmseed.guest.registry imports vmseed.host") for line in found
+    ), found
