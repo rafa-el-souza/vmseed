@@ -1,0 +1,31 @@
+milestone = "M99"
+pr = 3
+
+[[round]]
+n = 1
+base = "85e1cd5"
+head = "57ca535"
+date = 2026-11-21
+correctness = "ran"
+security = "not triggered"
+security_trigger = []
+verifier = "not needed"
+fix_review = "not needed"
+
+[[finding]]
+id = "M99-F01"
+round = 1
+source = "correctness"
+ref = "C1"
+file = "README.md"
+line = 1
+summary = "A throwaway finding for the gate check of M0."
+scenario = "While this finding is open, review-record stays red and no approval is requested."
+evidence = "test"
+reproduction = "tests/unit/tools/test_findings_commands.py::test_gate_stops_a_record_with_an_open_finding"
+path = "ordinary"
+effect = "none"
+clause = ""
+rule = ""
+plan = "record"
+outcome = ""
