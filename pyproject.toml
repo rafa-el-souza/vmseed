@@ -1,0 +1,121 @@
+[project]
+name = "vmseed"
+version = "1.0.0.dev0"
+description = "Provision hardened local VMs from verified cloud images, and prove the result."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Environment :: Console",
+    "Intended Audience :: System Administrators",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: System :: Systems Administration",
+    "Typing :: Typed",
+]
+dependencies = [
+    "pycdlib>=1.22.0",
+    "pydantic>=2.14.4",
+    "pyyaml>=6.0.4",
+    "rich>=15.0.0",
+    "typer>=0.29.2",
+]
+
+[project.urls]
+Repository = "https://github.com/rafa-el-souza/vmseed"
+
+[project.scripts]
+vmseed = "vmseed.cli:main"
+
+[build-system]
+# uv builds this backend itself when its own version is in range ("direct
+# build"), so nothing outside uv.lock is downloaded to install the project.
+requires = ["uv_build>=0.13.7,<0.14"]
+build-backend = "uv_build"
+
+[tool.uv]
+required-version = ">=0.13.7,<0.14"
+
+[dependency-groups]
+dev = [
+    "hypothesis>=6.170.17",
+    "pyright[nodejs]>=1.1.414",
+    "pytest>=9.2.0",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.17.6",
+]
+
+[tool.ruff]
+# Code blocks in the specification and the review briefs are illustrations,
+# not code to reformat.
+extend-exclude = ["*.md"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # import order
+    "B",    # bugbear
+    "UP",   # pyupgrade
+    "S",    # bandit: shell=True, unsafe YAML, pickle, temp files, ...
+    "SIM",  # simplify
+    "C4",   # comprehensions
+    "PTH",  # pathlib over os.path
+    "PT",   # pytest style
+    "RUF",  # ruff-specific
+]
+ignore = [
+    "S603",  # subprocess with an argument list is the rule here (CLAUDE.md)
+    "S607",  # host tools are found through PATH by design
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]  # assert is how pytest checks
+
+[tool.pyright]
+include = ["src", "tests", "tools"]
+typeCheckingMode = "strict"
+venvPath = "."
+venv = ".venv"
+reportMissingModuleSource = "error"
+reportUnnecessaryTypeIgnoreComment = "error"
+
+[tool.pytest.ini_options]
+minversion = "9.0"
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "--import-mode=importlib",
+    # Tier 3 runs only in CI, with `pytest -m e2e` (docs/spec/08-testing.md).
+    "-m", "not e2e",
+]
+markers = [
+    "contract: tier 2; feeds an artifact to a real tool, or exercises the real file system",
+    "e2e: tier 3; boots real VMs and runs only in CI",
+]
+xfail_strict = true
+filterwarnings = ["error"]
+
+[tool.coverage.run]
+branch = true
+source = ["vmseed"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+exclude_also = [
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "@overload",
+    "raise NotImplementedError",
+]

@@ -257,6 +257,8 @@ src/vmseed/catalog/    src/vmseed/data/       src/vmseed/state.py
 src/vmseed/display.py  src/vmseed/templating.py
 src/vmseed/config/loader.py   src/vmseed/config/models.py
 tools/                 examples/              .github/
+pyproject.toml         uv.lock                constraints.txt
+.claude/skills/milestone-review/
 ```
 
 or adds, in any other file under `src/`, a line that contains one of:
@@ -265,7 +267,11 @@ or adds, in any other file under `src/`, a line that contains one of:
 subprocess  Popen  os.open  os.unlink  os.rename  os.replace  os.chmod
 os.chown  os.umask  shutil.  tempfile.  urllib  shlex  yaml.load  pickle
 eval(  exec(
+from os import  from shutil import  from tempfile import  from yaml import
 ```
+
+In both blocks, items are two spaces or more apart, so a pattern may hold a
+single space.
 
 `tools/findings.py trigger <base>..<head>` prints what matched. The round's
 header records it, or records `not triggered`, so the user can check the
@@ -357,7 +363,9 @@ A finding is open while `outcome` is empty.
 | `record` | `recorded: forced path (<path>)`; `recorded: no effect`; or `fixed` with `picked = true` when the user chose it |
 
 A finding closed as `fixed` has `test`, `ci` or `verified` as evidence, unless
-the user decided the fix in a question or picked it.
+the user decided the fix in a question or picked it. A finding the user
+picked ends `fixed`: until then its outcome stays empty, so it keeps the
+record open.
 
 ### The tool
 

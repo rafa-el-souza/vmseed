@@ -1,9 +1,59 @@
-# Personal config (keep the .example tracked)
-/fedora-cloud.conf
-/temp/
+# Python and its tools
+__pycache__/
+*.py[cod]
+*.egg-info/
+/.venv/
+/build/
+/dist/
+/.pytest_cache/
+/.ruff_cache/
+/.hypothesis/
+/.coverage
+/.coverage.*
+/coverage.xml
+/htmlcov/
 
-# OVERLAY_IMAGE_DIR and BASE_IMAGE_DIR are configured (no default) and expected
-# outside the repo. Never commit key material or images regardless of location.
-*.pem
+# Fleet files name a host's directories and keys. Examples and tests keep
+# their own.
+vmseed.toml
+!/examples/**/vmseed.toml
+!/tests/**/vmseed.toml
+
+# Cloud images, disks, seeds and UEFI variable stores
 *.qcow2
 *.img
+*.raw
+*.iso
+*.fd
+
+# Logs, state records, known_hosts files and directories of real VMs. Tests
+# keep fixtures with these names.
+*.log
+vmseed.json
+known_hosts
+vms/
+!/tests/**/*.log
+!/tests/**/vmseed.json
+!/tests/**/known_hosts
+!/tests/**/vms/
+
+# Host-check outputs describe the user's host: they stay on it.
+/docs/host-checks/output/
+
+# Keys
+*.pem
+*.key
+id_rsa*
+id_ecdsa*
+id_ed25519*
+
+# Private files of the Bash tool (tag v0-bash) that a checkout used with it
+# may still hold: its personal config, its scratch directory, and the guest
+# diagnostics brought back from a VM.
+/fedora-cloud.conf
+/temp/
+/tools/diagnostics-results/
+
+# Local state of Claude Code
+/.claude/settings.local.json
+/.claude/worktrees/
