@@ -1,0 +1,81 @@
+# The quality gates of CLAUDE.md on every supported Python: format, lint,
+# type-check, the unit and golden tier, the contract tier with its real tools,
+# and the review records (docs/spec/08-testing.md, "CI workflows").
+name: ci
+
+on:
+  push:
+    branches: [main, v2]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  gates:
+    name: gates (Python ${{ matrix.python }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13", "3.14"]
+    env:
+      UV_PYTHON: ${{ matrix.python }}
+      UV_PYTHON_PREFERENCE: only-managed
+      UV_LOCKED: "1"
+      # pyright's wrapper would otherwise ask PyPI for a newer version.
+      PYRIGHT_PYTHON_IGNORE_WARNINGS: "1"
+      # A contract test whose tool is missing fails instead of skipping.
+      VMSEED_REQUIRE_TOOLS: "1"
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          version: "0.13.7"
+          require-checksums: true
+          enable-cache: false
+
+      - name: Install the tools of the contract tier
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends nftables
+
+      - name: Allow unprivileged user namespaces (A-CI-USERNS)
+        run: |
+          # Ubuntu restricts them through AppArmor; the nftables contract tests
+          # load a ruleset inside one.
+          if sysctl -n kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          unshare --user --map-root-user --net -- true
+
+      - name: Install the project
+        run: uv sync
+
+      - name: format
+        run: uv run ruff format --check .
+
+      - name: lint
+        run: uv run ruff check .
+
+      - name: type-check
+        run: uv run pyright
+
+      - name: unit and golden
+        run: uv run pytest -m "not contract and not e2e" --cov --cov-report=
+
+      - name: contract
+        run: uv run pytest -m contract --cov --cov-append --cov-fail-under=90
+
+      - name: review records
+        run: uv run python tools/findings.py check
