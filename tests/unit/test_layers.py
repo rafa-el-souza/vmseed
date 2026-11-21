@@ -8,8 +8,9 @@ and under `TYPE_CHECKING` count. A dynamic import counts by the module it
 names; one whose name is not a literal is refused in a restricted layer. A
 dynamic import is a call of `__import__`, `importlib.import_module`,
 `pkgutil.resolve_name` or `runpy.run_module`, under whatever name the
-module's imports give it. A call reached through `getattr`, `exec` or `eval`
-is not followed.
+module's imports give it; `importlib.util.find_spec` counts by the packages
+above the module it names, which it imports. A call reached through
+`getattr`, `exec` or `eval` is not followed.
 """
 
 import ast
@@ -64,8 +65,12 @@ DYNAMIC_IMPORTS = frozenset(
         "importlib.import_module",
         "pkgutil.resolve_name",
         "runpy.run_module",
+        "importlib.util.find_spec",
     }
 )
+
+#: Of those, the ones that import only the packages above the module named.
+IMPORTS_ONLY_PARENTS = frozenset({"importlib.util.find_spec"})
 
 
 def _bindings(tree: ast.Module) -> dict[str, str]:
@@ -153,7 +158,12 @@ def imports_of(module: str, path: Path, known: set[str]) -> set[str]:
             called = _called(node, bindings)
             if _is_dynamic_import(node, called):
                 target = _dynamic_target(node, called)
-                found |= with_parents(target) if target else {UNKNOWN}
+                if not target:
+                    found.add(UNKNOWN)
+                elif called in IMPORTS_ONLY_PARENTS:
+                    found |= with_parents(target) - {target}
+                else:
+                    found |= with_parents(target)
     return {m for m in found if m == UNKNOWN or m.split(".")[0] == "vmseed"}
 
 
@@ -358,6 +368,10 @@ def test_a_dynamic_import_through_a_bare_import_module_is_found(
             "import runpy\nrunpy.run_module('vmseed.host.virsh')\n",
             id="runpy.run_module",
         ),
+        pytest.param(
+            "import importlib.util\nimportlib.util.find_spec('vmseed.host.virsh')\n",
+            id="importlib.util.find_spec",
+        ),
     ],
 )
 def test_a_dynamic_import_through_another_spelling_is_found(
@@ -379,6 +393,19 @@ def test_a_function_of_the_same_name_is_not_a_dynamic_import(tmp_path: Path) -> 
             "config/names.py": "def resolve_name(name):\n    return name\n",
             "config/models.py": "from vmseed.config.names import resolve_name\n"
             "vm = 'web'\nresolve_name(vm)\n",
+        },
+    )
+
+    assert violations(src) == []
+
+
+def test_a_spec_lookup_counts_only_the_packages_above(tmp_path: Path) -> None:
+    src = write_tree(
+        tmp_path,
+        {
+            "config/probe.py": "import importlib.util\n"
+            "importlib.util.find_spec('vmseed.host')\n",
+            "host/virsh.py": "",
         },
     )
 
