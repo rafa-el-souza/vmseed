@@ -7,8 +7,9 @@ what a module reaches, not only on what it names. Imports inside functions
 and under `TYPE_CHECKING` count. A dynamic import counts by the module it
 names; one whose name is not a literal is refused in a restricted layer. A
 dynamic import is a call of `__import__`, `importlib.import_module`,
-`pkgutil.resolve_name` or `runpy.run_module`, under whatever name the
-module's imports give it; `importlib.util.find_spec` counts by the packages
+`pkgutil.resolve_name`, `runpy.run_module`, `pkgutil.get_data`,
+`pydoc.locate` or a function of `importlib.resources`, under whatever name
+the module's imports give it; `importlib.util.find_spec` counts by the packages
 above the module it names, which it imports; and an `__import__` with a
 `level` counts relative to the module's package. A call reached through
 `getattr`, `exec` or `eval` is not followed.
@@ -57,6 +58,22 @@ def modules_under(src: Path) -> dict[str, Path]:
     return modules
 
 
+#: The functions of importlib.resources: each imports the package that its
+#: first argument names, and with no argument reads the caller's own.
+RESOURCE_LOOKUPS = frozenset(
+    f"importlib.resources.{name}"
+    for name in (
+        "files",
+        "read_text",
+        "read_binary",
+        "open_text",
+        "open_binary",
+        "path",
+        "contents",
+        "is_resource",
+    )
+)
+
 #: The functions that import the module a string names, by the dotted name
 #: that a module's imports give them.
 DYNAMIC_IMPORTS = frozenset(
@@ -67,6 +84,9 @@ DYNAMIC_IMPORTS = frozenset(
         "pkgutil.resolve_name",
         "runpy.run_module",
         "importlib.util.find_spec",
+        "pkgutil.get_data",
+        "pydoc.locate",
+        *RESOURCE_LOOKUPS,
     }
 )
 
@@ -132,6 +152,8 @@ def _level(call: ast.Call) -> int | None:
 
 def _dynamic_target(call: ast.Call, called: str, own_package: str) -> str | None:
     """The module a dynamic import names; None when it is not a literal."""
+    if called in RESOURCE_LOOKUPS and not call.args and not call.keywords:
+        return own_package
     name = _literal(call.args[0]) if call.args else None
     if name is None:
         return None
@@ -472,6 +494,74 @@ def test_a_relative_dunder_import_within_the_layer_passes(tmp_path: Path) -> Non
         {
             "guest/registry.py": "__import__('controls', globals(), None, (), 1)\n",
             "guest/controls.py": "",
+        },
+    )
+
+    assert violations(src) == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        pytest.param(
+            "import importlib.resources\nimportlib.resources.files('vmseed.host')\n",
+            id="importlib.resources.files",
+        ),
+        pytest.param(
+            "from importlib.resources import files\nfiles('vmseed.host')\n",
+            id="files imported by name",
+        ),
+        pytest.param(
+            "import pkgutil\npkgutil.get_data('vmseed.host', 'data.txt')\n",
+            id="pkgutil.get_data",
+        ),
+        pytest.param(
+            "import pydoc\npydoc.locate('vmseed.host.virsh')\n",
+            id="pydoc.locate",
+        ),
+    ],
+)
+def test_a_lookup_that_imports_the_package_it_names_is_found(
+    tmp_path: Path, source: str
+) -> None:
+    files = {"guest/registry.py": source, "host/virsh.py": ""}
+
+    found = violations(write_tree(tmp_path, files))
+
+    assert any(
+        line.startswith("vmseed.guest.registry imports vmseed.host") for line in found
+    ), found
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        "read_text('vmseed.host', 'data.txt')",
+        "read_binary('vmseed.host', 'data.txt')",
+        "open_text('vmseed.host', 'data.txt')",
+        "open_binary('vmseed.host', 'data.txt')",
+        "path('vmseed.host', 'data.txt')",
+        "contents('vmseed.host')",
+        "is_resource('vmseed.host', 'data.txt')",
+    ],
+)
+def test_the_rest_of_the_resources_api_is_found(tmp_path: Path, call: str) -> None:
+    source = f"import importlib.resources\nimportlib.resources.{call}\n"
+    files = {"guest/registry.py": source, "host/virsh.py": ""}
+
+    found = violations(write_tree(tmp_path, files))
+
+    assert any(
+        line.startswith("vmseed.guest.registry imports vmseed.host") for line in found
+    ), found
+
+
+def test_the_resources_of_the_callers_own_package_pass(tmp_path: Path) -> None:
+    src = write_tree(
+        tmp_path,
+        {
+            "config/models.py": "import importlib.resources\n"
+            "importlib.resources.files()\n",
         },
     )
 
