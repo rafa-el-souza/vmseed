@@ -131,11 +131,21 @@ def test_the_outcomes_equal_the_outcomes_table() -> None:
     assert kinds - exempt == set(findings.NEEDS_ANSWER)
 
 
+def _block_items(block: str) -> tuple[str, ...]:
+    """A trigger block's items: two spaces or more apart, as 11 says."""
+    return tuple(
+        item
+        for line in block.splitlines()
+        for item in re.split(r" {2,}", line.strip())
+        if item
+    )
+
+
 def test_the_trigger_equals_the_two_blocks_of_the_specification() -> None:
     paths, patterns = blocks(section("When the security reviewer runs"))
 
-    assert tuple(paths.split()) == findings.TRIGGER_PATHS
-    assert tuple(patterns.split()) == findings.TRIGGER_PATTERNS
+    assert _block_items(paths) == findings.TRIGGER_PATHS
+    assert _block_items(patterns) == findings.TRIGGER_PATTERNS
 
 
 def test_the_commands_equal_the_tool_table() -> None:

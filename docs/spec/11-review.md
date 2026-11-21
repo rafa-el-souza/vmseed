@@ -267,7 +267,11 @@ or adds, in any other file under `src/`, a line that contains one of:
 subprocess  Popen  os.open  os.unlink  os.rename  os.replace  os.chmod
 os.chown  os.umask  shutil.  tempfile.  urllib  shlex  yaml.load  pickle
 eval(  exec(
+from os import  from shutil import  from tempfile import  from yaml import
 ```
+
+In both blocks, items are two spaces or more apart, so a pattern may hold a
+single space.
 
 `tools/findings.py trigger <base>..<head>` prints what matched. The round's
 header records it, or records `not triggered`, so the user can check the

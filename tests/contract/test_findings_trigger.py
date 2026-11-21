@@ -228,3 +228,21 @@ def test_a_change_to_the_dependencies_or_the_briefs_matches(
     commit(repo, {path: "x\n"}, "head")
 
     assert findings.trigger(f"{base}..HEAD", repo) == [path]
+
+
+@pytest.mark.parametrize(
+    ("added", "pattern"),
+    [
+        ("from os import unlink\nunlink(path)\n", "from os import"),
+        ("from shutil import rmtree\nrmtree(path)\n", "from shutil import"),
+        ("from tempfile import mkstemp\nmkstemp()\n", "from tempfile import"),
+        ("from yaml import load\nload(text)\n", "from yaml import"),
+    ],
+)
+def test_a_from_import_of_a_trigger_module_matches(
+    repo: Path, added: str, pattern: str
+) -> None:
+    base = git(repo, "rev-parse", "HEAD")
+    commit(repo, {"src/vmseed/cli.py": "print('x')\n" + added}, "head")
+
+    assert findings.trigger(f"{base}..HEAD", repo) == [f"src/vmseed/cli.py: {pattern}"]

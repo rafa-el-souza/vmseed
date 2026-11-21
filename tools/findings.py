@@ -116,8 +116,19 @@ NEEDS_ANSWER = ("fixed", "kept as built", "deferred")
 # The two trigger lists keep the layout of their blocks in 11, so that the
 # two can be read side by side.
 
+
+def _items(block: str) -> tuple[str, ...]:
+    """The items of a block laid out as in 11: two spaces or more apart."""
+    return tuple(
+        item
+        for line in block.split("\n")
+        for item in re.split(r" {2,}", line.strip())
+        if item
+    )
+
+
 #: The security trigger: a change to a file under one of these paths, ...
-TRIGGER_PATHS = tuple(
+TRIGGER_PATHS = _items(
     """
     src/vmseed/host/       src/vmseed/ops/        src/vmseed/guest/
     src/vmseed/catalog/    src/vmseed/data/       src/vmseed/state.py
@@ -126,16 +137,17 @@ TRIGGER_PATHS = tuple(
     tools/                 examples/              .github/
     pyproject.toml         uv.lock                constraints.txt
     .claude/skills/milestone-review/
-    """.split()  # noqa: SIM905
+    """
 )
 
 #: ... or a line added to any other file under src/ containing one of these.
-TRIGGER_PATTERNS = tuple(
+TRIGGER_PATTERNS = _items(
     """
     subprocess  Popen  os.open  os.unlink  os.rename  os.replace  os.chmod
     os.chown  os.umask  shutil.  tempfile.  urllib  shlex  yaml.load  pickle
     eval(  exec(
-    """.split()  # noqa: SIM905
+    from os import  from shutil import  from tempfile import  from yaml import
+    """
 )
 
 #: The commands of "The tool".
