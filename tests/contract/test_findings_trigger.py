@@ -170,3 +170,43 @@ def test_the_command_reports_a_bad_range_and_exits_2(
 def test_git_outside_a_repository_is_an_error(tmp_path: Path) -> None:
     with pytest.raises(findings.GitError):
         findings.trigger("HEAD..HEAD", tmp_path)
+
+
+@pytest.mark.parametrize(
+    "separator",
+    ["\x0c", "\x1c", "\x85", "\u2028"],
+    ids=["form feed", "file separator", "NEL", "line separator"],
+)
+def test_a_pattern_on_an_added_line_that_holds_a_unicode_line_break_matches(
+    repo: Path, separator: str
+) -> None:
+    base = git(repo, "rev-parse", "HEAD")
+    added = f'SEPARATOR = "{separator}"; import subprocess\n'
+    commit(repo, {"src/vmseed/cli.py": "print('x')\n" + added}, "head")
+
+    assert findings.trigger(f"{base}..HEAD", repo) == ["src/vmseed/cli.py: subprocess"]
+
+
+LINE_SEPARATOR = chr(0x2028)
+
+
+@pytest.mark.parametrize(
+    "added",
+    [
+        chr(0x0C) + "import subprocess\n",
+        "import os" + chr(0x0D) + "import subprocess\n",
+        f'run(["{LINE_SEPARATOR}"], stdout=subprocess.PIPE)\n',
+        f'MARK = ("{chr(0x1E)}", subprocess.PIPE)\n',
+    ],
+    ids=["form-feed", "carriage-return", "line-separator", "record-separator"],
+)
+def test_a_pattern_after_a_character_git_does_not_end_a_line_on_matches(
+    repo: Path, added: str
+) -> None:
+    base = git(repo, "rev-parse", "HEAD")
+    commit(repo, {"src/vmseed/cli.py": "print('x')\n" + added}, "head")
+
+    # For git, the range adds one line to src/vmseed/cli.py, and it holds
+    # "subprocess".
+    assert git(repo, "diff", "--numstat", base, "HEAD") == "1\t0\tsrc/vmseed/cli.py"
+    assert findings.trigger(f"{base}..HEAD", repo) == ["src/vmseed/cli.py: subprocess"]

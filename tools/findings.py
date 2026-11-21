@@ -1109,7 +1109,9 @@ def _patterns_added(root: Path, base: str, head: str, name: str) -> list[str]:
     )
     added: list[str] = []
     in_hunk = False
-    for line in diff.decode("utf-8", "replace").splitlines():
+    # git ends a line at "\n" only; str.splitlines() would also break it at a
+    # form feed, a lone CR, NEL or U+2028, and lose what follows.
+    for line in diff.decode("utf-8", "replace").split("\n"):
         if line.startswith("@@"):
             in_hunk = True
         elif in_hunk and line.startswith("+"):
