@@ -210,3 +210,21 @@ def test_a_pattern_after_a_character_git_does_not_end_a_line_on_matches(
     # "subprocess".
     assert git(repo, "diff", "--numstat", base, "HEAD") == "1\t0\tsrc/vmseed/cli.py"
     assert findings.trigger(f"{base}..HEAD", repo) == ["src/vmseed/cli.py: subprocess"]
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "pyproject.toml",
+        "uv.lock",
+        "constraints.txt",
+        ".claude/skills/milestone-review/briefs/security.md",
+    ],
+)
+def test_a_change_to_the_dependencies_or_the_briefs_matches(
+    repo: Path, path: str
+) -> None:
+    base = git(repo, "rev-parse", "HEAD")
+    commit(repo, {path: "x\n"}, "head")
+
+    assert findings.trigger(f"{base}..HEAD", repo) == [path]

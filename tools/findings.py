@@ -124,6 +124,8 @@ TRIGGER_PATHS = tuple(
     src/vmseed/display.py  src/vmseed/templating.py
     src/vmseed/config/loader.py   src/vmseed/config/models.py
     tools/                 examples/              .github/
+    pyproject.toml         uv.lock                constraints.txt
+    .claude/skills/milestone-review/
     """.split()  # noqa: SIM905
 )
 
