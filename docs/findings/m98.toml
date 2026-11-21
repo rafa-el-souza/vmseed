@@ -1,0 +1,15 @@
+# Throwaway record for the gate re-check of M0's review (pull request 4).
+# Never merged: the pull request is closed once the check is shown.
+milestone = "M98"
+pr = 4
+
+[[round]]
+n = 1
+base = "85e1cd5"
+head = "730c2da"
+date = 2026-11-21
+correctness = "ran"
+security = "not triggered"
+security_trigger = []
+verifier = "not needed"
+fix_review = "not needed"
